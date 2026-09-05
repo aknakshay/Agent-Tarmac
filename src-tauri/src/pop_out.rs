@@ -1,5 +1,5 @@
 //! "Pop out to Ghostty" — hands a session off to an external terminal
-//! process. If claude-deck owns a running PTY for the session, it's stopped
+//! process. If agent-tarmac owns a running PTY for the session, it's stopped
 //! first (two processes must never share a session). A small shell script is
 //! written to disk and launched in Ghostty, falling back to Terminal.app if
 //! Ghostty isn't installed. The session id is then tracked as "external" so
@@ -19,7 +19,7 @@ use crate::session_index::SessionIndexState;
 use crate::workspace_store::{self, WorkspaceState};
 
 /// Ids of sessions currently running in an external terminal (popped out),
-/// as opposed to under claude-deck's own PtyManager.
+/// as opposed to under agent-tarmac's own PtyManager.
 #[derive(Default)]
 pub struct ExternalSessions(pub Mutex<HashSet<String>>);
 
@@ -257,7 +257,7 @@ pub fn pop_out_to_ghostty(
     };
 
     // A session can never be driven by two processes at once: stop
-    // claude-deck's own PTY (if any) before handing off to the external
+    // agent-tarmac's own PTY (if any) before handing off to the external
     // terminal. Mirrors `stop_session` exactly rather than duplicating it.
     // kill() only sends SIGTERM and returns immediately, so we must poll
     // until the process has actually exited before launching a second
@@ -296,9 +296,9 @@ mod tests {
 
     #[test]
     fn pop_out_script_contains_cwd_and_resume_id() {
-        let script = pop_out_script("/Users/akshay/proj", "abc-123");
+        let script = pop_out_script("/Users/me/proj", "abc-123");
         assert!(
-            script.contains("cd '/Users/akshay/proj'"),
+            script.contains("cd '/Users/me/proj'"),
             "script should cd into cwd, got: {script}"
         );
         assert!(
@@ -310,9 +310,9 @@ mod tests {
 
     #[test]
     fn pop_out_script_escapes_single_quotes_in_cwd() {
-        let script = pop_out_script("/Users/akshay/it's a dir", "abc-123");
+        let script = pop_out_script("/Users/me/it's a dir", "abc-123");
         assert!(
-            script.contains("cd '/Users/akshay/it'\"'\"'s a dir'"),
+            script.contains("cd '/Users/me/it'\"'\"'s a dir'"),
             "single quote in cwd should be escaped via '\"'\"', got: {script}"
         );
     }

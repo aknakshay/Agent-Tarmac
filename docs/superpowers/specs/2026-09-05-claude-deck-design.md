@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-05
 **Status:** Approved design, pre-implementation
-**Working name:** Claude Deck (rename before publishing if desired)
+**Working name:** Claude Deck (renamed to **Agent Tarmac** before publishing — see Task 13; this doc otherwise stands as the historical design record and isn't updated for the rename elsewhere)
 **License / distribution:** MIT, open source on GitHub, macOS-first
 
 ## 1. Problem
