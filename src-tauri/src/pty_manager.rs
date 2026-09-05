@@ -74,6 +74,16 @@ impl PtyManager {
         emitter: impl Fn(PtyEvent) + Send + 'static,
         spec: SpawnSpec,
     ) -> Result<(), String> {
+        // A session already running under this id must never be silently
+        // overwritten: doing so would orphan the original PtyHandle (its
+        // reader thread keeps running, then emits a false Exited once the
+        // orphaned process eventually dies) while the new handle takes over
+        // writes/output for callers still using the same id. Treat a repeat
+        // spawn of a live id as a no-op rather than a respawn.
+        if self.is_running(&spec.session_id) {
+            return Ok(());
+        }
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {

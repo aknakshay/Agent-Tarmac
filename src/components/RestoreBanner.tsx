@@ -20,6 +20,21 @@ async function fetchAndClearLiveIds(): Promise<void> {
 }
 
 /**
+ * Drops only `resumedIds` from live_session_ids, read-modify-write against
+ * the latest workspace. An id whose resume_session call failed is left in
+ * place — Rust never added it in the first place since the spawn failed, so
+ * there's nothing to preserve there, but the persisted pointer must keep
+ * naming it so the next launch offers it again instead of losing it.
+ */
+async function clearResumedLiveIds(resumedIds: string[]): Promise<void> {
+  if (resumedIds.length === 0) return;
+  const ws = await invoke<Workspace>("get_workspace");
+  const remaining = ws.live_session_ids.filter((id) => !resumedIds.includes(id));
+  if (remaining.length === ws.live_session_ids.length) return;
+  await invoke("set_workspace", { ws: { ...ws, live_session_ids: remaining } });
+}
+
+/**
  * Offers to relaunch the sessions that were running the last time the app
  * closed. Evaluated once, after the session index has loaded for the first
  * time — evaluating earlier would see every id as "missing" and either skip
@@ -29,9 +44,11 @@ export function RestoreBanner() {
   const sessions = useDeck((state) => state.sessions);
   const sessionsLoaded = useDeck((state) => state.sessionsLoaded);
   const focus = useDeck((state) => state.focus);
+  const setStatus = useDeck((state) => state.setStatus);
 
   const [candidateIds, setCandidateIds] = useState<string[] | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const evaluated = useRef(false);
 
   useEffect(() => {
@@ -70,28 +87,58 @@ export function RestoreBanner() {
 
   const handleRestore = async () => {
     setRestoring(true);
+    setError(null);
+    const resumed: string[] = [];
+    const failed: string[] = [];
+
     for (let i = 0; i < candidateIds.length; i++) {
+      const id = candidateIds[i];
       try {
-        await invoke("resume_session", { sessionId: candidateIds[i] });
+        await invoke("resume_session", { sessionId: id });
+        // Optimistically flip status before this id's pane (if any) mounts:
+        // TerminalPane resumes on mount only when it sees status "dormant",
+        // and the real "working" status doesn't land until the later
+        // session_status_changed event round-trips. Without this, focusing
+        // the first restored session below would race TerminalPane's own
+        // mount-time resume into a second, redundant resume_session call for
+        // the same id. (PtyManager::spawn also now no-ops on an
+        // already-running id, so this is a belt-and-suspenders UX smoothing,
+        // not the load-bearing fix.)
+        setStatus(id, "working");
+        resumed.push(id);
       } catch (err) {
-        console.error(`Failed to resume session ${candidateIds[i]}`, err);
+        console.error(`Failed to resume session ${id}`, err);
+        failed.push(id);
       }
       if (i < candidateIds.length - 1) {
         await new Promise((resolve) => setTimeout(resolve, RESUME_GAP_MS));
       }
     }
-    focus(candidateIds[0]);
-    try {
-      await fetchAndClearLiveIds();
-    } catch (err) {
-      console.error("Failed to clear workspace after restore", err);
+
+    if (resumed.length > 0) {
+      focus(resumed[0]);
     }
-    setCandidateIds(null);
+
+    try {
+      await clearResumedLiveIds(resumed);
+    } catch (err) {
+      console.error("Failed to update workspace after restore", err);
+    }
+
+    if (failed.length > 0) {
+      setError(
+        `Couldn't restore ${failed.length} session${failed.length === 1 ? "" : "s"}. Try again, or they'll be offered again next launch.`,
+      );
+      setCandidateIds(failed);
+    } else {
+      setCandidateIds(null);
+    }
     setRestoring(false);
   };
 
   const handleDismiss = () => {
     setCandidateIds(null);
+    setError(null);
     fetchAndClearLiveIds().catch((err) => console.error("Failed to dismiss workspace banner", err));
   };
 
@@ -101,8 +148,15 @@ export function RestoreBanner() {
       className="pointer-events-auto absolute inset-x-0 top-0 z-30 flex items-center gap-3 border-b border-border bg-surface/95 px-4 py-2 backdrop-blur-sm"
     >
       <RestoreIcon />
-      <span className="flex-1 text-sm text-ink-muted">
-        Restore workspace ({candidateIds.length} session{candidateIds.length === 1 ? "" : "s"})
+      <span
+        role={error ? "alert" : undefined}
+        className={`flex-1 text-sm ${error ? "text-needs-you" : "text-ink-muted"}`}
+      >
+        {error ?? (
+          <>
+            Restore workspace ({candidateIds.length} session{candidateIds.length === 1 ? "" : "s"})
+          </>
+        )}
       </span>
       <button
         type="button"
