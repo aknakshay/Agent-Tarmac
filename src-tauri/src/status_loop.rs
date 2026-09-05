@@ -12,12 +12,18 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 const TICK_INTERVAL: Duration = Duration::from_secs(2);
 const IDLE_AFTER_SECS: u64 = 300;
+/// Minimum time between two native notifications for the same session, even
+/// if it transitions into `NeedsYou` more than once in that window. Without
+/// this, a session that flaps in and out of `NeedsYou` (e.g. brief
+/// `Working` blips from a fast tool call) re-fires a notification on every
+/// re-entry.
+const NOTIFY_COOLDOWN_SECS: u64 = 600;
 /// An externally-tracked (popped-out) session counts as running only while
 /// its transcript is still being actively written to.
 const EXTERNAL_FRESH_SECS: u64 = 15;
@@ -43,11 +49,16 @@ pub struct StatusChange {
 ///   does not re-fire on every unchanged tick.
 /// - Skipped while the main window is focused — the in-app badge covers
 ///   that case.
+/// - `last_notified_secs_ago`: how long ago this session last fired a
+///   notification, if ever. `None` means it never has (or the record was
+///   cleared). A transition that would otherwise notify is suppressed while
+///   this is within `NOTIFY_COOLDOWN_SECS`.
 fn should_notify(
     prev: Option<Status>,
     new: Status,
     first_tick: bool,
     window_focused: bool,
+    last_notified_secs_ago: Option<u64>,
 ) -> bool {
     if first_tick || window_focused {
         return false;
@@ -55,7 +66,13 @@ fn should_notify(
     if new != Status::NeedsYou {
         return false;
     }
-    matches!(prev, Some(Status::Working) | Some(Status::Idle))
+    if !matches!(prev, Some(Status::Working) | Some(Status::Idle)) {
+        return false;
+    }
+    match last_notified_secs_ago {
+        Some(secs_ago) => secs_ago > NOTIFY_COOLDOWN_SECS,
+        None => true,
+    }
 }
 
 /// Starts the status loop on a background thread. Call once from `.setup`,
@@ -63,10 +80,11 @@ fn should_notify(
 pub fn start(app: AppHandle) {
     thread::spawn(move || {
         let mut previous: HashMap<String, Status> = HashMap::new();
+        let mut last_notified: HashMap<String, Instant> = HashMap::new();
         let mut first_tick = true;
 
         loop {
-            tick(&app, &mut previous, first_tick);
+            tick(&app, &mut previous, &mut last_notified, first_tick);
             first_tick = false;
             thread::sleep(TICK_INTERVAL);
         }
@@ -102,7 +120,12 @@ fn notify_needs_you(app: &AppHandle, session: &SessionMeta) {
     }
 }
 
-fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: bool) {
+fn tick(
+    app: &AppHandle,
+    previous: &mut HashMap<String, Status>,
+    last_notified: &mut HashMap<String, Instant>,
+    first_tick: bool,
+) {
     let sessions = {
         let Some(state) = app.try_state::<SessionIndexState>() else {
             return;
@@ -194,8 +217,19 @@ fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: boo
             );
         }
 
-        if should_notify(prev_status, status, first_tick, window_focused) {
+        let last_notified_secs_ago = last_notified
+            .get(&session.id)
+            .map(|t| t.elapsed().as_secs());
+
+        if should_notify(
+            prev_status,
+            status,
+            first_tick,
+            window_focused,
+            last_notified_secs_ago,
+        ) {
             notify_needs_you(app, &session);
+            last_notified.insert(session.id.clone(), Instant::now());
         }
 
         previous.insert(session.id.clone(), status);
@@ -206,40 +240,113 @@ fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: boo
 mod tests {
     use super::*;
 
+    /// (prev, new, first_tick, window_focused, last_notified_secs_ago, expected)
+    type ShouldNotifyCase = (Option<Status>, Status, bool, bool, Option<u64>, bool);
+
     #[test]
     fn should_notify_table() {
-        let cases: Vec<(Option<Status>, Status, bool, bool, bool)> = vec![
-            // (prev, new, first_tick, window_focused, expected)
+        let cases: Vec<ShouldNotifyCase> = vec![
+            // (prev, new, first_tick, window_focused, last_notified_secs_ago, expected)
             // First tick statuses are initial state, never an event.
-            (None, Status::NeedsYou, true, false, false),
-            (Some(Status::Working), Status::NeedsYou, true, false, false),
-            // Real transition into NeedsYou while unfocused: notify.
-            (Some(Status::Working), Status::NeedsYou, false, false, true),
-            (Some(Status::Idle), Status::NeedsYou, false, false, true),
+            (None, Status::NeedsYou, true, false, None, false),
+            (
+                Some(Status::Working),
+                Status::NeedsYou,
+                true,
+                false,
+                None,
+                false,
+            ),
+            // Real transition into NeedsYou while unfocused, never notified
+            // before: notify.
+            (
+                Some(Status::Working),
+                Status::NeedsYou,
+                false,
+                false,
+                None,
+                true,
+            ),
+            (
+                Some(Status::Idle),
+                Status::NeedsYou,
+                false,
+                false,
+                None,
+                true,
+            ),
             // Same transition while the window is focused: the in-app
             // badge covers it, skip.
-            (Some(Status::Working), Status::NeedsYou, false, true, false),
+            (
+                Some(Status::Working),
+                Status::NeedsYou,
+                false,
+                true,
+                None,
+                false,
+            ),
             // Already NeedsYou, still NeedsYou: no repeat notification.
             (
                 Some(Status::NeedsYou),
                 Status::NeedsYou,
                 false,
                 false,
+                None,
                 false,
             ),
             // Not transitioning into NeedsYou at all.
-            (Some(Status::Working), Status::Idle, false, false, false),
+            (
+                Some(Status::Working),
+                Status::Idle,
+                false,
+                false,
+                None,
+                false,
+            ),
             // No prior status recorded (session appeared mid-run, not on
             // first_tick) landing directly on NeedsYou: nothing to
             // transition from, don't notify.
-            (None, Status::NeedsYou, false, false, false),
+            (None, Status::NeedsYou, false, false, None, false),
+            // Re-entering NeedsYou (e.g. a flap through Working) within the
+            // cooldown window: suppressed.
+            (
+                Some(Status::Working),
+                Status::NeedsYou,
+                false,
+                false,
+                Some(30),
+                false,
+            ),
+            (
+                Some(Status::Working),
+                Status::NeedsYou,
+                false,
+                false,
+                Some(NOTIFY_COOLDOWN_SECS),
+                false,
+            ),
+            // Cooldown has fully elapsed: notify again.
+            (
+                Some(Status::Working),
+                Status::NeedsYou,
+                false,
+                false,
+                Some(NOTIFY_COOLDOWN_SECS + 1),
+                true,
+            ),
         ];
 
-        for (prev, new, first_tick, window_focused, expected) in cases {
+        for (prev, new, first_tick, window_focused, last_notified_secs_ago, expected) in cases {
             assert_eq!(
-                should_notify(prev, new, first_tick, window_focused),
+                should_notify(
+                    prev,
+                    new,
+                    first_tick,
+                    window_focused,
+                    last_notified_secs_ago
+                ),
                 expected,
-                "prev={prev:?} new={new:?} first_tick={first_tick} window_focused={window_focused}"
+                "prev={prev:?} new={new:?} first_tick={first_tick} window_focused={window_focused} last_notified_secs_ago={last_notified_secs_ago:?}"
             );
         }
     }

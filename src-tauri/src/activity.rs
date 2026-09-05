@@ -23,8 +23,25 @@ pub struct StatusInputs {
     pub idle_after_secs: u64,
 }
 
+/// How long the assistant's last message can sit quiet before we call it
+/// `NeedsYou` instead of `Working`.
+///
+/// History: this used to be 3s (same as the tool-running fast path below),
+/// but a genuinely-working `claude` routinely pauses longer than 3s between
+/// pty writes (tool execution, thinking), so the old threshold made status
+/// flap Working <-> NeedsYou on every such pause, spamming notifications. A
+/// real "Claude finished and is waiting on you" state stays quiet for good,
+/// so 20s is long enough to absorb normal tool-run pauses while still being
+/// short relative to `idle_after_secs`.
+const ASSISTANT_QUIET_NEEDS_YOU_SECS: u64 = 20;
+
 /// Direct transcription of the decision table in spec §5 (Tiers 1-2 unified).
 /// Rows are evaluated in order; the first match wins.
+///
+/// For the `last_role_assistant` branch specifically:
+///   - `< ASSISTANT_QUIET_NEEDS_YOU_SECS` -> Working (still settling)
+///   - `ASSISTANT_QUIET_NEEDS_YOU_SECS .. idle_after_secs` -> NeedsYou
+///   - `>= idle_after_secs` -> Idle
 pub fn derive_status(i: &StatusInputs) -> Status {
     if !i.running {
         return Status::Dormant;
@@ -38,6 +55,9 @@ pub fn derive_status(i: &StatusInputs) -> Status {
     if i.last_role_assistant {
         if i.secs_since_activity >= i.idle_after_secs {
             return Status::Idle;
+        }
+        if i.secs_since_activity < ASSISTANT_QUIET_NEEDS_YOU_SECS {
+            return Status::Working;
         }
         return Status::NeedsYou;
     }
@@ -95,6 +115,26 @@ mod tests {
                     idle_after_secs: 300,
                 },
                 Status::Working,
+            ),
+            (
+                StatusInputs {
+                    running: true,
+                    secs_since_activity: 19,
+                    last_role_assistant: true,
+                    prompt_at_tail: false,
+                    idle_after_secs: 300,
+                },
+                Status::Working,
+            ),
+            (
+                StatusInputs {
+                    running: true,
+                    secs_since_activity: 20,
+                    last_role_assistant: true,
+                    prompt_at_tail: false,
+                    idle_after_secs: 300,
+                },
+                Status::NeedsYou,
             ),
             (
                 StatusInputs {

@@ -8,6 +8,25 @@ import { playRadarPing } from "./lib/sound";
 const PERSIST_DEBOUNCE_MS = 1000;
 const pendingMetaPersists = new Map<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * Mirrors the backend's per-session notification cooldown (see
+ * `NOTIFY_COOLDOWN_SECS` in status_loop.rs) for the radar ping sound.
+ * The badge status can still flap (Working clears it, NeedsYou re-sets it)
+ * without this — that's cheap and visual — but re-playing the ping sound on
+ * every flap is what actually annoyed users, so only the sound is
+ * suppressed while a session is within its cooldown window.
+ */
+const RADAR_PING_COOLDOWN_MS = 10 * 60 * 1000;
+const lastRadarPingAt = new Map<string, number>();
+
+function playRadarPingWithCooldown(id: string) {
+  const now = Date.now();
+  const last = lastRadarPingAt.get(id);
+  if (last !== undefined && now - last < RADAR_PING_COOLDOWN_MS) return;
+  lastRadarPingAt.set(id, now);
+  playRadarPing();
+}
+
 function toWireEntry(session: Session): WireSessionMetaEntry {
   return {
     last_seen_at: session.lastSeenAt,
@@ -200,7 +219,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
       // starts needing you while you're looking elsewhere. Backend only
       // emits on status CHANGE, so this can't repeat for a session that
       // stays needsYou.
-      if (badge && !session.badge) playRadarPing();
+      if (badge && !session.badge) playRadarPingWithCooldown(id);
       return { sessions: { ...state.sessions, [id]: { ...session, status, badge } } };
     });
   },
