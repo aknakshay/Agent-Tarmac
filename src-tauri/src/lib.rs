@@ -11,7 +11,7 @@ use std::process::Command;
 use std::sync::Mutex;
 use tauri::Manager;
 
-/// Checks whether the `claude` binary (or `CLAUDE_DECK_CLAUDE_BIN` override,
+/// Checks whether the `claude` binary (or `AGENT_TARMAC_CLAUDE_BIN` override,
 /// same knob `pty_manager::claude_program` reads) is runnable, for the
 /// sidebar's "no sessions found" empty-state hint. Returns the version
 /// string on success, `None` if the binary isn't on PATH or exits non-zero —

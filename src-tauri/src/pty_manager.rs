@@ -208,10 +208,14 @@ impl PtyManager {
             c.process_id()
         };
 
+        // portable-pty puts the child in its own session (setsid), so its
+        // pgid equals its pid — signal the whole process GROUP with
+        // killpg, not just the immediate child, so any children Claude
+        // Code itself spawns (e.g. tool subprocesses) go down too.
         #[cfg(unix)]
         if let Some(pid) = pid {
             unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+                libc::killpg(pid as i32, libc::SIGTERM);
             }
         }
         #[cfg(not(unix))]
@@ -224,6 +228,14 @@ impl PtyManager {
             std::thread::sleep(std::time::Duration::from_secs(5));
             let mut c = child.lock().unwrap_or_else(|e| e.into_inner());
             if matches!(c.try_wait(), Ok(None)) {
+                #[cfg(unix)]
+                if let Some(pid) = pid {
+                    unsafe {
+                        libc::killpg(pid as i32, libc::SIGKILL);
+                    }
+                }
+                // Fallback in case the group signal somehow missed the
+                // tracked child itself (e.g. `pid` was unavailable above).
                 let _ = c.kill();
             }
         });
@@ -281,7 +293,7 @@ impl PtyManager {
 }
 
 pub fn claude_program() -> String {
-    std::env::var("CLAUDE_DECK_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
+    std::env::var("AGENT_TARMAC_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
 }
 
 #[derive(Clone, Serialize)]

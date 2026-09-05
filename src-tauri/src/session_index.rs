@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 pub struct SessionIndexState(pub Mutex<Vec<SessionMeta>>);
 
 pub fn claude_projects_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("CLAUDE_DECK_PROJECTS_DIR") {
+    if let Ok(dir) = std::env::var("AGENT_TARMAC_PROJECTS_DIR") {
         return PathBuf::from(dir);
     }
     dirs::home_dir()
@@ -84,7 +84,7 @@ pub fn start_watcher(app: AppHandle) {
 
 #[tauri::command]
 pub fn list_sessions(state: State<SessionIndexState>) -> Vec<SessionMeta> {
-    state.0.lock().unwrap().clone()
+    state.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 #[cfg(test)]
