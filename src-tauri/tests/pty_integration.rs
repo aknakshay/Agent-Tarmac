@@ -28,6 +28,11 @@ fn spawn_stream_write_kill() {
     mgr.kill("s1").unwrap();
     std::thread::sleep(Duration::from_millis(500));
     assert!(!mgr.is_running("s1"));
+    assert_eq!(
+        mgr.session_count(),
+        0,
+        "dead session handle should be reaped (fds released) after kill"
+    );
     assert!(events
         .lock()
         .unwrap()

@@ -33,8 +33,8 @@ pub enum PtyEvent {
 }
 
 struct PtyHandle {
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     tail: Arc<Mutex<String>>,
     last_output_at: Arc<Mutex<Option<Instant>>>,
@@ -58,6 +58,13 @@ fn push_tail(tail: &Arc<Mutex<String>>, chunk: &str) {
         }
         t.drain(..cut);
     }
+}
+
+/// Drops any handle whose reader thread has observed EOF, releasing its
+/// master/writer/child fds. Called at the top of every map access so dead
+/// sessions don't linger forever.
+fn reap_dead(map: &mut HashMap<String, PtyHandle>) {
+    map.retain(|_, handle| *handle.running.lock().unwrap_or_else(|e| e.into_inner()));
 }
 
 impl PtyManager {
@@ -84,7 +91,10 @@ impl PtyManager {
         drop(pair.slave);
 
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(
+            pair.master.take_writer().map_err(|e| e.to_string())?,
+        ));
+        let master: Arc<Mutex<Box<dyn MasterPty + Send>>> = Arc::new(Mutex::new(pair.master));
 
         let tail: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         let last_output_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
@@ -122,7 +132,7 @@ impl PtyManager {
         });
 
         let handle = PtyHandle {
-            master: pair.master,
+            master,
             writer,
             child,
             tail,
@@ -130,41 +140,52 @@ impl PtyManager {
             running,
         };
 
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(spec.session_id, handle);
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        reap_dead(&mut guard);
+        guard.insert(spec.session_id, handle);
 
         Ok(())
     }
 
     pub fn write(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
-        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let handle = guard
-            .get_mut(session_id)
-            .ok_or_else(|| format!("unknown session: {session_id}"))?;
-        handle.writer.write_all(data).map_err(|e| e.to_string())?;
-        handle.writer.flush().map_err(|e| e.to_string())
+        // Clone the per-session writer handle and release the global map
+        // lock before doing blocking I/O, so a stalled write to one session
+        // can't stall every other session's write/kill/is_running/spawn.
+        let writer = {
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            reap_dead(&mut guard);
+            let handle = guard
+                .get(session_id)
+                .ok_or_else(|| format!("unknown session: {session_id}"))?;
+            handle.writer.clone()
+        };
+        let mut w = writer.lock().unwrap_or_else(|e| e.into_inner());
+        w.write_all(data).map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())
     }
 
     pub fn resize(&self, session_id: &str, rows: u16, cols: u16) -> Result<(), String> {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let handle = guard
-            .get(session_id)
-            .ok_or_else(|| format!("unknown session: {session_id}"))?;
-        handle
-            .master
-            .resize(PtySize {
-                rows,
-                cols,
-                ..Default::default()
-            })
-            .map_err(|e| e.to_string())
+        let master = {
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            reap_dead(&mut guard);
+            let handle = guard
+                .get(session_id)
+                .ok_or_else(|| format!("unknown session: {session_id}"))?;
+            handle.master.clone()
+        };
+        let m = master.lock().unwrap_or_else(|e| e.into_inner());
+        m.resize(PtySize {
+            rows,
+            cols,
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())
     }
 
     pub fn kill(&self, session_id: &str) -> Result<(), String> {
         let child = {
-            let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            reap_dead(&mut guard);
             let handle = guard
                 .get(session_id)
                 .ok_or_else(|| format!("unknown session: {session_id}"))?;
@@ -200,7 +221,8 @@ impl PtyManager {
     }
 
     pub fn is_running(&self, session_id: &str) -> bool {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        reap_dead(&mut guard);
         match guard.get(session_id) {
             Some(handle) => {
                 let reader_says_running = *handle.running.lock().unwrap_or_else(|e| e.into_inner());
@@ -215,7 +237,8 @@ impl PtyManager {
     }
 
     pub fn last_output_tail(&self, session_id: &str) -> String {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        reap_dead(&mut guard);
         match guard.get(session_id) {
             Some(handle) => handle
                 .tail
@@ -227,13 +250,22 @@ impl PtyManager {
     }
 
     pub fn secs_since_output(&self, session_id: &str) -> Option<u64> {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        reap_dead(&mut guard);
         let handle = guard.get(session_id)?;
         let last = *handle
             .last_output_at
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         last.map(|instant| instant.elapsed().as_secs())
+    }
+
+    /// Number of sessions currently tracked (dead handles reaped first).
+    /// Mostly for tests/observability.
+    pub fn session_count(&self) -> usize {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        reap_dead(&mut guard);
+        guard.len()
     }
 }
 
