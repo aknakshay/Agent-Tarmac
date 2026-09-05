@@ -141,6 +141,7 @@ export function SessionContextMenu({ session, x, y, allTags, onClose, onRequestR
           }}
           placeholder="Add tag…"
           aria-label="Add tag"
+          data-app-editable
           className="h-7 w-full rounded-md border border-border bg-app-bg px-2 text-xs text-ink placeholder:text-ink-faint focus:border-accent/50 focus:outline-none"
         />
         {tagInputFocused && suggestions.length > 0 && (

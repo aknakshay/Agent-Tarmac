@@ -45,15 +45,24 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!e.metaKey) return;
 
-      // Any focused text input (a rename field, the command bar/new-session
-      // dialog inputs, or a contenteditable) should get the keystroke, not
-      // have it intercepted as a shortcut — checked generically rather than
-      // only while a modal is open, since sidebar/pane rename inputs are
-      // never modal.
+      // Any focused text input the app itself owns (a rename field, the
+      // command bar/new-session dialog inputs, the context menu's tag
+      // input) should get the keystroke, not have it intercepted as a
+      // shortcut — checked generically rather than only while a modal is
+      // open, since sidebar/pane rename inputs are never modal.
+      //
+      // This is an ALLOWLIST (`data-app-editable`), not a blanket
+      // INPUT/TEXTAREA/contentEditable check: xterm.js renders keyboard
+      // input through its own hidden `<textarea class="xterm-helper-
+      // textarea">`, which is the actual event target whenever a terminal
+      // pane has focus — the common case. A blanket editable-element check
+      // would match that textarea too and silently swallow every shortcut
+      // during normal terminal use. Marking only the app's own inputs
+      // means an unmarked one (like xterm's) still lets shortcuts through,
+      // and a future unmarked app input degrades to a minor annoyance
+      // rather than a dead shortcut.
       const target = e.target as HTMLElement | null;
-      const isEditableTarget =
-        !!target &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      const isAppEditableTarget = !!target && !!target.closest("[data-app-editable]");
 
       if (e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -62,7 +71,7 @@ function App() {
         return;
       }
 
-      if (isEditableTarget) return;
+      if (isAppEditableTarget) return;
 
       if (e.shiftKey && e.key.toLowerCase() === "u") {
         e.preventDefault();

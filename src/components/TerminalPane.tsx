@@ -146,6 +146,7 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
               }
             }}
             aria-label="Rename session"
+            data-app-editable
             className="h-6 min-w-0 flex-1 rounded-md border border-accent/50 bg-app-bg px-1.5 text-sm text-ink focus:outline-none"
           />
         ) : (

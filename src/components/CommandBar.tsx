@@ -123,6 +123,7 @@ export function CommandBar({ onClose, onFocusSession, onNewSession }: CommandBar
             onKeyDown={handleKeyDown}
             placeholder="Jump to a session…"
             aria-label="Jump to a session"
+            data-app-editable
             className="h-11 flex-1 bg-transparent text-sm text-ink placeholder:text-ink-faint focus:outline-none"
           />
           <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-ink-faint">esc</kbd>

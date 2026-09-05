@@ -113,6 +113,7 @@ function RenameInput({ ref, initialValue, onCommit, onCancel }: RenameInputProps
         }
       }}
       aria-label="Rename session"
+      data-app-editable
       className="h-8 w-full rounded-md border border-accent/50 bg-app-bg px-2 text-sm text-ink focus:outline-none"
     />
   );
