@@ -15,8 +15,7 @@ Running many [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions
 
 It's agent-agnostic by design — Claude Code is the only backend today, with Codex and Gemini planned (see [Roadmap](#roadmap)).
 
-<!-- TODO: replace this with a real screenshot of the sidebar + terminal pane before publishing. -->
-> **Screenshot placeholder** — sidebar (grouped, activity-dotted sessions) + embedded terminal pane, single window.
+![Agent Tarmac — activity-aware sidebar and embedded terminal, switching between sessions](assets/brand/hero.gif)
 
 ## Features
 
