@@ -1,6 +1,3 @@
-// Consumed by Task 3 (session list command); not yet wired into lib.rs.
-#![allow(dead_code)]
-
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::path::Path;
