@@ -8,7 +8,7 @@ import { CommandBar } from "./components/CommandBar";
 import { NewSessionDialog } from "./components/NewSessionDialog";
 import { RestoreBanner } from "./components/RestoreBanner";
 import { UpdateBanner } from "./components/UpdateBanner";
-import { OnApproachIllustration } from "./components/icons/BrandMotifs";
+import { Home } from "./components/Home";
 import { writeExited, writeOutput } from "./terminals";
 import type { SessionMeta, StatusChange } from "./types";
 import type { Workspace } from "./lib/workspaceMeta";
@@ -25,7 +25,6 @@ interface PtyExitedPayload {
 function App() {
   const setSessions = useDeck((state) => state.setSessions);
   const setStatus = useDeck((state) => state.setStatus);
-  const hasSessions = useDeck((state) => Object.keys(state.sessions).length > 0);
   const openIds = useDeck((state) => state.openIds);
   const activeId = useDeck((state) => state.activeId);
   const focus = useDeck((state) => state.focus);
@@ -152,14 +151,8 @@ function App() {
           <TerminalPane key={id} sessionId={id} active={id === activeId} />
         ))}
         {activeId === null && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center">
-            <OnApproachIllustration className="h-40 w-60 opacity-90" />
-            <span className="text-lg font-semibold text-ink">Agent Tarmac</span>
-            <p className="max-w-sm text-sm text-ink-faint">
-              {hasSessions
-                ? "Select a session from the sidebar to open its terminal."
-                : "Nothing on the board yet — waiting for Claude Code sessions to appear."}
-            </p>
+          <div className="absolute inset-0">
+            <Home />
           </div>
         )}
       </main>
