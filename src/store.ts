@@ -117,6 +117,15 @@ interface DeckState {
    */
   availableTerminals: string[];
   setAvailableTerminals(terminals: string[]): void;
+  /**
+   * Session ids currently running in an external terminal (popped out).
+   * Seeded at startup from the backend's reconciled set so "Bring back"
+   * survives an app relaunch; kept in step by the pane's pop-out/bring-back
+   * actions.
+   */
+  externalIds: string[];
+  setExternalIds(ids: string[]): void;
+  setSessionExternal(id: string, external: boolean): void;
 }
 
 export const useDeck = create<DeckState>()((set, get) => ({
@@ -172,6 +181,16 @@ export const useDeck = create<DeckState>()((set, get) => ({
   availableTerminals: ["terminal"],
   setAvailableTerminals: (terminals) =>
     set({ availableTerminals: terminals.length > 0 ? terminals : ["terminal"] }),
+  externalIds: [],
+  setExternalIds: (ids) => set({ externalIds: ids }),
+  setSessionExternal: (id, external) =>
+    set((state) => ({
+      externalIds: external
+        ? state.externalIds.includes(id)
+          ? state.externalIds
+          : [...state.externalIds, id]
+        : state.externalIds.filter((e) => e !== id),
+    })),
   setStatus: (id, status) => {
     set((state) => {
       const session = state.sessions[id];

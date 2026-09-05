@@ -95,11 +95,14 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
   const [poppingOut, setPoppingOut] = useState(false);
   const [popOutError, setPopOutError] = useState<string | null>(null);
 
-  // Tracks whether this session has been successfully popped out in this pane
-  // lifetime. The Rust ExternalSessions state is the authority; we mirror it
-  // locally to show/hide the "Bring back" vs "Open in Ghostty" buttons without
-  // adding a new IPC round-trip on every render.
-  const [isPoppedOut, setIsPoppedOut] = useState(false);
+  // The Rust ExternalSessions state is the authority on popped-out sessions;
+  // the store's externalIds mirrors it (seeded at startup from the backend's
+  // reconciliation, updated by the actions below), so "Bring back" survives
+  // an app relaunch instead of resetting with pane-local state.
+  const externalIds = useDeck((state) => state.externalIds);
+  const setSessionExternal = useDeck((state) => state.setSessionExternal);
+  const isPoppedOut = externalIds.includes(sessionId);
+  const setIsPoppedOut = (external: boolean) => setSessionExternal(sessionId, external);
 
   // ── Bring-back state ─────────────────────────────────────────────────────
   const [showBringBackConfirm, setShowBringBackConfirm] = useState(false);

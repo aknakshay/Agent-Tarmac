@@ -61,6 +61,7 @@ pub fn run() {
             pop_out::pop_out_to_ghostty,
             pop_out::bring_back_session,
             pop_out::detect_terminals,
+            pop_out::list_external_sessions,
         ])
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());
@@ -79,6 +80,14 @@ pub fn run() {
             let workspace = workspace_store::load(&workspace_path);
             let state = app.state::<workspace_store::WorkspaceState>();
             *state.0.lock().unwrap_or_else(|e| e.into_inner()) = workspace;
+
+            // External (popped-out) sessions DO get startup reconciliation —
+            // unlike live_session_ids above, their ground truth (a running
+            // external `claude` process) exists independently of this app,
+            // so pgrep can verify each persisted id right now. Survivors are
+            // re-tracked (sidebar shows them running, in-app resume stays
+            // blocked); the rest are dropped.
+            pop_out::reconcile_external_on_startup(app.handle());
 
             Ok(())
         })

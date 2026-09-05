@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aknakshay/agent-tarmac/actions/workflows/ci.yml"><img src="https://github.com/aknakshay/agent-tarmac/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+  <a href="https://github.com/aknakshay/Agent-Tarmac/actions/workflows/ci.yml"><img src="https://github.com/aknakshay/Agent-Tarmac/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
 </p>
 
@@ -31,7 +31,7 @@ It's agent-agnostic by design — Claude Code is the only backend today, with Co
 Agent Tarmac isn't in a store yet — build it from source:
 
 ```sh
-git clone https://github.com/aknakshay/agent-tarmac.git
+git clone https://github.com/aknakshay/Agent-Tarmac.git
 cd agent-tarmac
 npm install
 npm run tauri build

@@ -104,6 +104,16 @@ pub fn detect_terminals() -> Vec<String> {
     detect_installed_terminals(macos_app_exists)
 }
 
+/// The currently-tracked external (popped-out) session ids — lets the
+/// frontend restore its "Bring back" affordance after a relaunch, where the
+/// panes' local popped-out state has reset but startup reconciliation found
+/// the external processes still running.
+#[tauri::command]
+pub fn list_external_sessions(external: State<ExternalSessions>) -> Vec<String> {
+    let guard = external.0.lock().unwrap_or_else(|e| e.into_inner());
+    guard.iter().cloned().collect()
+}
+
 /// Escapes `s` for embedding inside single quotes in a POSIX shell command:
 /// `it's` -> `it'"'"'s`, so the surrounding `'...'` stays a single literal
 /// argument even when `s` itself contains a `'`.
@@ -449,8 +459,39 @@ pub fn pop_out_to_ghostty(
     };
 
     external.insert(&session_id);
+    // Persisted so a relaunch remembers this session lives in an external
+    // terminal (startup reconciles the list against real pgrep results).
+    workspace_store::set_external_session(&app, &workspace, &session_id, true)?;
 
     Ok(PopOutResult { app: app_used })
+}
+
+/// Startup reconciliation for the persisted external set: a session that
+/// still has a live external `claude --resume` process stays tracked (so the
+/// sidebar shows it running and resume-in-app is blocked from double-writing
+/// its transcript); one whose process is gone is dropped from the workspace.
+pub fn reconcile_external_on_startup(app: &AppHandle) {
+    let Some(workspace) = app.try_state::<WorkspaceState>() else {
+        return;
+    };
+    let Some(external) = app.try_state::<ExternalSessions>() else {
+        return;
+    };
+    let persisted: Vec<String> = {
+        let guard = workspace.0.lock().unwrap_or_else(|e| e.into_inner());
+        guard.external_session_ids.clone()
+    };
+    for id in persisted {
+        // Ids reaching the workspace passed validate_session_id at pop-out
+        // time, but re-validate before handing anything to pgrep anyway.
+        let still_running = validate_session_id(&id).is_ok() && !find_external_pids(&id).is_empty();
+        if still_running {
+            external.insert(&id);
+        } else if let Err(err) = workspace_store::set_external_session(app, &workspace, &id, false)
+        {
+            eprintln!("failed to drop stale external session {id}: {err}");
+        }
+    }
 }
 
 /// Outcome of `bring_back_session`: the session either had an active external
@@ -486,6 +527,8 @@ pub struct BringBackResult {
 /// Ghostty first") or if SIGTERM itself fails.
 #[tauri::command]
 pub fn bring_back_session(
+    app: AppHandle,
+    workspace: State<WorkspaceState>,
     external: State<ExternalSessions>,
     session_id: String,
 ) -> Result<BringBackResult, String> {
@@ -496,6 +539,7 @@ pub fn bring_back_session(
 
     if pids.is_empty() {
         external.remove(&session_id);
+        let _ = workspace_store::set_external_session(&app, &workspace, &session_id, false);
         return Ok(BringBackResult {
             outcome: BringBackOutcome::NotRunning,
         });
@@ -524,6 +568,7 @@ pub fn bring_back_session(
     .map_err(|_| "external session didn't exit — close it in Ghostty first".to_string())?;
 
     external.remove(&session_id);
+    let _ = workspace_store::set_external_session(&app, &workspace, &session_id, false);
 
     Ok(BringBackResult {
         outcome: BringBackOutcome::Stopped,

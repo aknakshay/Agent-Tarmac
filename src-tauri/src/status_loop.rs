@@ -142,6 +142,16 @@ fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: boo
             Some(external) if external.contains(&session.id) => {
                 if transcript_secs > EXTERNAL_STALE_SECS {
                     external.remove(&session.id);
+                    // Keep the persisted set in step, so a stale external
+                    // isn't resurrected on the next launch's reconcile.
+                    if let Some(ws) = app.try_state::<crate::workspace_store::WorkspaceState>() {
+                        let _ = crate::workspace_store::set_external_session(
+                            app,
+                            &ws,
+                            &session.id,
+                            false,
+                        );
+                    }
                     false
                 } else {
                     transcript_secs < EXTERNAL_FRESH_SECS

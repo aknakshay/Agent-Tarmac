@@ -123,6 +123,12 @@ function App() {
       .then((terminals) => useDeck.getState().setAvailableTerminals(terminals))
       .catch((err) => console.error("detect_terminals failed", err));
 
+    // Seed the popped-out set from the backend's startup reconciliation so
+    // "Bring back" survives a relaunch (pane-local state resets, this doesn't).
+    invoke<string[]>("list_external_sessions")
+      .then((ids) => useDeck.getState().setExternalIds(ids))
+      .catch((err) => console.error("list_external_sessions failed", err));
+
     // Keep the listen() promises themselves rather than a `let fn` captured by a
     // later .then(); under StrictMode's dev-only mount->cleanup->remount, cleanup
     // can run before the promise resolves, which would otherwise leak a listener.

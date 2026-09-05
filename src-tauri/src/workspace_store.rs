@@ -46,6 +46,12 @@ pub struct Workspace {
     /// existed still loads cleanly — same back-compat pattern as `session_meta`.
     #[serde(default)]
     pub project_meta: HashMap<String, ProjectMetaEntry>,
+    /// Sessions popped out to an external terminal. Persisted so a relaunch
+    /// can reconcile against still-running external `claude` processes
+    /// instead of forgetting them (the old two-writer-after-restart gap).
+    /// Same `#[serde(default)]` back-compat pattern as the fields above.
+    #[serde(default)]
+    pub external_session_ids: Vec<String>,
 }
 
 pub fn load(path: &Path) -> Workspace {
@@ -150,9 +156,41 @@ pub fn remove_live_session(
     save(&path, &guard).map_err(|e| e.to_string())
 }
 
+/// Adds/removes `id` in `external_session_ids` and persists. The external
+/// set must survive an app restart — startup reconciles it against real
+/// `pgrep` results (see lib.rs setup) so a still-running Ghostty session is
+/// remembered instead of shown Dormant and double-resumed.
+pub fn set_external_session(
+    app: &tauri::AppHandle,
+    state: &WorkspaceState,
+    id: &str,
+    external: bool,
+) -> Result<(), String> {
+    let path = workspace_path(app)?;
+    let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    if external {
+        if !guard.external_session_ids.iter().any(|e| e == id) {
+            guard.external_session_ids.push(id.to_string());
+        }
+    } else {
+        guard.external_session_ids.retain(|e| e != id);
+    }
+    save(&path, &guard).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_format_without_external_ids_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ws.json");
+        std::fs::write(&p, r#"{"live_session_ids":["a"],"favorites":[]}"#).unwrap();
+        let ws = load(&p);
+        assert_eq!(ws.live_session_ids, vec!["a".to_string()]);
+        assert!(ws.external_session_ids.is_empty());
+    }
 
     #[test]
     fn reconcile_removes_dead_ids() {
