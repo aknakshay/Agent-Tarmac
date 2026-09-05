@@ -3,6 +3,7 @@ import type { Session, SessionMeta, Status } from "./types";
 import { basename } from "./lib/paths";
 import { updateWorkspace, type WireSessionMetaEntry, type Workspace } from "./lib/workspaceMeta";
 import { scheduleProjectNamePersist } from "./lib/projectMeta";
+import { playRadarPing } from "./lib/sound";
 
 const PERSIST_DEBOUNCE_MS = 1000;
 const pendingMetaPersists = new Map<string, ReturnType<typeof setTimeout>>();
@@ -102,6 +103,13 @@ interface DeckState {
   removeTag(id: string, tag: string): void;
   /** Sets/clears a project display name. Empty string clears back to basename. Persists (debounced). */
   setProjectName(cwd: string, name: string): void;
+  /**
+   * Terminal keys detected on this machine (backend `detect_terminals`, in
+   * preference order, "terminal" always last). Defaults to just Terminal.app
+   * until detection completes.
+   */
+  availableTerminals: string[];
+  setAvailableTerminals(terminals: string[]): void;
 }
 
 export const useDeck = create<DeckState>()((set, get) => ({
@@ -154,11 +162,19 @@ export const useDeck = create<DeckState>()((set, get) => ({
     }
   },
 
+  availableTerminals: ["terminal"],
+  setAvailableTerminals: (terminals) =>
+    set({ availableTerminals: terminals.length > 0 ? terminals : ["terminal"] }),
   setStatus: (id, status) => {
     set((state) => {
       const session = state.sessions[id];
       if (!session) return state;
       const badge = status === "needsYou" && id !== state.activeId ? true : session.badge;
+      // The audible twin of the badge: a radar ping the moment a session
+      // starts needing you while you're looking elsewhere. Backend only
+      // emits on status CHANGE, so this can't repeat for a session that
+      // stays needsYou.
+      if (badge && !session.badge) playRadarPing();
       return { sessions: { ...state.sessions, [id]: { ...session, status, badge } } };
     });
   },
