@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 268 32" fill="none" role="img" aria-label="Agent Tarmac">
+  <!--
+    Lockup: mark at left, "Agent Tarmac" set in the app's own system
+    font stack (see body { font-family } in src/index.css) so the
+    wordmark always matches whatever the OS actually renders, rather
+    than drifting from a separately-chosen webfont. "Tarmac" carries a
+    touch more tracking than "Agent" to read as the fixed, weighted half
+    of the name, echoing a tower call sign without spelling one out.
+  -->
+  <g>
+    <path d="M16 2.1 L28.3 22.8 L16 17.8 L3.7 22.8 Z" fill="currentColor" />
+    <path d="M11.5 26.1 L20.5 26.1 L19.6 28.1 L12.4 28.1 Z" fill="var(--tarmac-accent, currentColor)" />
+  </g>
+  <text
+    x="40"
+    y="21.5"
+    font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif"
+    font-size="17"
+    font-weight="600"
+    letter-spacing="-0.2"
+    fill="currentColor"
+  >Agent<tspan letter-spacing="0.4" dx="5">Tarmac</tspan></text>
+</svg>

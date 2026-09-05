@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!--
+    Agent Tarmac macOS app icon source, rasterized to icon-1024.png.
+    Self-contained: colors are hardcoded (no currentColor / custom
+    properties) so it rasterizes correctly standalone via rsvg-convert,
+    unlike logo.svg which is designed to live inside an app's CSS cascade.
+
+    Squircle background approximates the Big Sur continuous-corner icon
+    shape (rx/ry at ~22% of the canvas half-width). Dart mark on approach,
+    runway centerline receding toward the viewer for depth.
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#12151b" />
+      <stop offset="100%" stop-color="#1a1e26" />
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="42%" r="42%">
+      <stop offset="0%" stop-color="#6ba5fb" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#6ba5fb" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="dart" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#dde1e8" />
+    </linearGradient>
+    <clipPath id="squircle">
+      <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" />
+    </clipPath>
+    <filter id="dartShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#05070a" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)" />
+    <circle cx="512" cy="430" r="430" fill="url(#glow)" />
+
+    <!-- runway centerline, receding toward the dart's tail -->
+    <g fill="#6ba5fb">
+      <path d="M505.9 525.6 L518.1 525.6 L526.3 604.1 L497.7 604.1 Z" opacity="0.55" />
+      <path d="M494.1 621.4 L529.9 621.4 L554.5 699.9 L469.5 699.9 Z" opacity="0.7" />
+      <path d="M462.3 717.1 L561.7 717.1 L602.7 795.6 L421.3 795.6 Z" opacity="0.85" />
+      <path d="M410.5 812.9 L613.5 812.9 L670.9 891.4 L353.1 891.4 Z" opacity="1" />
+    </g>
+
+    <!-- dart, on approach -->
+    <path
+      d="M512 260 L714.4 601 L512 517 L309.6 601 Z"
+      fill="url(#dart)"
+      filter="url(#dartShadow)"
+    />
+  </g>
+
+  <!-- squircle hairline for definition against dark app-switcher backgrounds -->
+  <rect x="1" y="1" width="1022" height="1022" rx="223" ry="223"
+        fill="none" stroke="#2a2f3a" stroke-width="2" clip-path="url(#squircle)" />
+</svg>

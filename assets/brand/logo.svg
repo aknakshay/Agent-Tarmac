@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" role="img" aria-label="Agent Tarmac">
+  <!--
+    Agent Tarmac mark: a delta wing dart on approach, over two
+    foreshortened runway centerline stripes. Geometric, hard angled,
+    instrument panel construction, no curves, no clip art fuselage.
+
+    Color contract: the dart is currentColor so the mark drops into any
+    monochrome context (favicons, nav bars, print). The stripes read
+    the tarmac-accent custom property with a currentColor fallback, so a
+    plain single-color render still renders correctly as one solid color.
+  -->
+  <path
+    d="M12 1.6 L21.2 17.1 L12 13.3 L2.8 17.1 Z"
+    fill="currentColor"
+  />
+  <path
+    d="M8.6 19.6 L15.4 19.6 L14.7 21 L9.3 21 Z"
+    fill="var(--tarmac-accent, currentColor)"
+  />
+</svg>

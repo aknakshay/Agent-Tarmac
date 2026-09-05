@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" fill="none" role="img" aria-label="On approach, no active sessions">
+  <!--
+    "On approach" empty state. A radar sweep over the runway centerline,
+    dart shown small and distant (no active session yet, one is inbound).
+    Built from the same primitives as logo.svg: same dart, same stripe
+    trapezoids, at empty-state scale. Colors are hardcoded for reliable
+    standalone preview; swap to currentColor / the tarmac accent custom
+    property if it needs to inherit theme at integration time.
+  -->
+  <defs>
+    <radialGradient id="sweep" cx="50%" cy="100%" r="75%">
+      <stop offset="0%" stop-color="#6ba5fb" stop-opacity="0.28" />
+      <stop offset="70%" stop-color="#6ba5fb" stop-opacity="0.05" />
+      <stop offset="100%" stop-color="#6ba5fb" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- radar arcs, centered on the ground station at bottom-center -->
+  <g stroke="#282b33" stroke-width="1" fill="none">
+    <circle cx="120" cy="150" r="40" />
+    <circle cx="120" cy="150" r="72" />
+    <circle cx="120" cy="150" r="104" />
+  </g>
+
+  <!-- sweep wedge -->
+  <path d="M120 150 L120 46 A104 104 0 0 1 210 100 Z" fill="url(#sweep)" />
+
+  <!-- runway centerline -->
+  <g fill="#3a4150">
+    <path d="M117.5 132 L122.5 132 L124.5 142 L115.5 142 Z" />
+    <path d="M114.5 146 L125.5 146 L128.5 156 L111.5 156 Z" />
+  </g>
+
+  <!-- dart, distant and inbound -->
+  <path d="M120 70 L131 96 L120 91 L109 96 Z" fill="#a1a5ac" />
+
+  <!-- ground station beacon -->
+  <circle cx="120" cy="150" r="3" fill="#6ba5fb" />
+</svg>
