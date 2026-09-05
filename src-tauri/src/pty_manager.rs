@@ -7,8 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::session_index::SessionIndexState;
+use crate::workspace_store::{self, WorkspaceState};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const TAIL_CAPACITY: usize = 2048;
 
@@ -301,6 +302,14 @@ fn make_emitter(app: AppHandle) -> impl Fn(PtyEvent) + Send + 'static {
             );
         }
         PtyEvent::Exited { session_id } => {
+            // Reconcile live_session_ids against PtyManager's ground truth
+            // rather than just removing `session_id` directly: it's the same
+            // outcome for the common case, but also mops up any other stale
+            // entry that never got cleaned up (e.g. a prior crash).
+            let workspace = app.state::<WorkspaceState>();
+            let manager = app.state::<PtyManager>();
+            let _ =
+                workspace_store::reconcile_and_save(&app, &workspace, |id| manager.is_running(id));
             let _ = app.emit("pty_exited", PtyExitedPayload { session_id });
         }
     }
@@ -311,6 +320,7 @@ pub fn resume_session(
     app: AppHandle,
     manager: State<PtyManager>,
     session_index: State<SessionIndexState>,
+    workspace: State<WorkspaceState>,
     session_id: String,
 ) -> Result<(), String> {
     let cwd = {
@@ -325,14 +335,16 @@ pub fn resume_session(
     };
 
     manager.spawn(
-        make_emitter(app),
+        make_emitter(app.clone()),
         SpawnSpec {
             session_id: session_id.clone(),
             cwd: PathBuf::from(cwd),
             program: claude_program(),
-            args: vec!["--resume".into(), session_id],
+            args: vec!["--resume".into(), session_id.clone()],
         },
-    )
+    )?;
+
+    workspace_store::add_live_session(&app, &workspace, &session_id)
 }
 
 #[tauri::command]
@@ -351,12 +363,20 @@ pub fn start_new_session(
             args: vec![],
         },
     )?;
+    // `new-*` placeholder ids are intentionally not persisted to
+    // live_session_ids — see workspace_store::add_live_session.
     Ok(session_id)
 }
 
 #[tauri::command]
-pub fn stop_session(manager: State<PtyManager>, session_id: String) -> Result<(), String> {
-    manager.kill(&session_id)
+pub fn stop_session(
+    app: AppHandle,
+    manager: State<PtyManager>,
+    workspace: State<WorkspaceState>,
+    session_id: String,
+) -> Result<(), String> {
+    manager.kill(&session_id)?;
+    workspace_store::remove_live_session(&app, &workspace, &session_id)
 }
 
 #[tauri::command]

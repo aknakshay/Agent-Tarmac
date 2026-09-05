@@ -41,6 +41,14 @@ pub fn run() {
             session_index::start_watcher(app.handle().clone());
             status_loop::start(app.handle().clone());
 
+            // Intentionally NOT reconciled against PtyManager here: nothing
+            // has been spawned yet at startup, so `is_running` would be false
+            // for every id and reconcile would wipe live_session_ids before
+            // the restore banner (RestoreBanner.tsx) ever gets a chance to
+            // offer them. The saved ids ARE the restore candidates; reconcile
+            // is instead wired into the running-app path (pty_exited /
+            // stop_session in pty_manager.rs) where PtyManager's state is
+            // meaningful.
             let workspace_path = workspace_store::workspace_path(app.handle())?;
             let workspace = workspace_store::load(&workspace_path);
             let state = app.state::<workspace_store::WorkspaceState>();

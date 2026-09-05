@@ -6,6 +6,8 @@ interface DeckState {
   sessions: Record<string, Session>;
   openIds: string[]; // sessions with a terminal pane created
   activeId: string | null;
+  /** True once the first `list_sessions`/`sessions_updated` result has landed. */
+  sessionsLoaded: boolean;
   /**
    * Merges a fresh session list from the backend, preserving status/badge/
    * favorite for known ids. A session missing from `metas` is dropped unless
@@ -31,6 +33,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
   sessions: {},
   openIds: [],
   activeId: null,
+  sessionsLoaded: false,
 
   setSessions: (metas) => {
     const existing = get().sessions;
@@ -52,7 +55,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
       if (id in next) continue;
       if (openIds.includes(id) || id.startsWith("new-")) next[id] = session;
     }
-    set({ sessions: next });
+    set({ sessions: next, sessionsLoaded: true });
   },
 
   setStatus: (id, status) => {
