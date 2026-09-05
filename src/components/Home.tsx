@@ -126,7 +126,7 @@ export function Home() {
               }
               className="font-medium text-accent transition-opacity duration-150 hover:opacity-80"
             >
-              v{update.version} available — view release
+              v{update.version} available — View release
             </button>
           ) : (
             <span>up to date</span>
