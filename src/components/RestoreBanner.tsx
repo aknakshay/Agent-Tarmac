@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useDeck } from "../store";
-import type { Workspace } from "../lib/workspaceMeta";
+import { updateWorkspace, type Workspace } from "../lib/workspaceMeta";
 
 const RESUME_GAP_MS = 250;
 
 async function fetchAndClearLiveIds(): Promise<void> {
   // Read-modify-write against the latest workspace rather than a value
-  // captured at mount, so a concurrent favorites/open_session_ids change
-  // (e.g. from closing a pane) isn't clobbered.
-  const ws = await invoke<Workspace>("get_workspace");
-  if (ws.live_session_ids.length === 0) return;
-  await invoke("set_workspace", { ws: { ...ws, live_session_ids: [] } });
+  // captured at mount, so a concurrent favorites/session-metadata write
+  // (e.g. from the sidebar context menu) isn't clobbered — routed through
+  // updateWorkspace's shared queue for the same reason.
+  await updateWorkspace((ws) => (ws.live_session_ids.length === 0 ? ws : { ...ws, live_session_ids: [] }));
 }
 
 /**
@@ -23,10 +22,11 @@ async function fetchAndClearLiveIds(): Promise<void> {
  */
 async function clearResumedLiveIds(resumedIds: string[]): Promise<void> {
   if (resumedIds.length === 0) return;
-  const ws = await invoke<Workspace>("get_workspace");
-  const remaining = ws.live_session_ids.filter((id) => !resumedIds.includes(id));
-  if (remaining.length === ws.live_session_ids.length) return;
-  await invoke("set_workspace", { ws: { ...ws, live_session_ids: remaining } });
+  await updateWorkspace((ws) => {
+    const remaining = ws.live_session_ids.filter((id) => !resumedIds.includes(id));
+    if (remaining.length === ws.live_session_ids.length) return ws;
+    return { ...ws, live_session_ids: remaining };
+  });
 }
 
 /**
