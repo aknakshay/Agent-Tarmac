@@ -58,6 +58,11 @@ interface Enemy {
   maxHp: number;
   grazed: boolean;
   flashUntil: number;
+  /** Sign of the zigzag lateral term last frame and a decaying flash timer,
+   * used to flare the thruster exactly when the enemy reverses direction.
+   * Unused by other enemy types. */
+  zigSign: number;
+  zigFlashUntil: number;
 }
 
 interface FallingPowerUp {
@@ -107,6 +112,11 @@ interface GameState {
   shieldCharges: number;
   shakeUntil: number;
   hitFlashUntil: number;
+  /** Previous frame's player X, used only to derive a banking-tilt angle for
+   * rendering — never read by game logic. */
+  prevPlayerX: number;
+  /** Timestamp a fired shot's muzzle flash fades at, per barrel position. */
+  muzzleFlashes: { x: number; until: number }[];
 }
 
 function freshWave(state: GameState, level: number) {
@@ -151,6 +161,8 @@ function newGame(width: number, height: number): GameState {
     shieldCharges: 0,
     shakeUntil: 0,
     hitFlashUntil: 0,
+    prevPlayerX: width / 2,
+    muzzleFlashes: [],
   };
   freshWave(state, 1);
   return state;
@@ -159,24 +171,50 @@ function newGame(width: number, height: number): GameState {
 function spawnParticles(state: GameState, x: number, y: number, color: string, count: number) {
   for (let i = 0; i < count; i += 1) {
     const angle = (Math.PI * 2 * i) / count + Math.random() * 0.6;
-    const speed = 1.2 + Math.random() * 2.2;
+    const speed = 1.4 + Math.random() * 2.6;
+    const life = 26 + Math.random() * 10;
     state.particles.push({
       x,
       y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
-      life: 22,
-      maxLife: 22,
+      life,
+      maxLife: life,
       color,
     });
   }
 }
 
+/**
+ * Palette pulled from the app's oklch design tokens (src/index.css), tinted
+ * per role so each enemy silhouette is readable at a glance:
+ *   drifter — cool gray-blue (a dim, unremarkable straggler)
+ *   zigzag  — amber, matching --color-needs-you (erratic, "pay attention")
+ *   diver   — red-tinged, intensifying as it commits to a dive
+ *   tank    — desaturated violet plating, the boss silhouette
+ * Also used to tint that enemy's explosion particles on death.
+ */
+const ENEMY_PALETTE: Record<EnemyType, { base: string; light: string; dark: string; glow: string }> = {
+  straight: { base: "#7a8bab", light: "#aab7d1", dark: "#4b5875", glow: "#8fa3c9" },
+  zigzag: { base: "#e0b24a", light: "#f7d787", dark: "#8a6420", glow: "#f7a73b" },
+  diver: { base: "#c96a4f", light: "#f0967a", dark: "#6e2f22", glow: "#ff5c4d" },
+  tank: { base: "#6f5f9e", light: "#9a8ac9", dark: "#3c3260", glow: "#c9a5ff" },
+};
+
+/** Back-compat flat color per type, used for particle tints and the HUD. */
 const ENEMY_COLOR: Record<EnemyType, string> = {
-  straight: "#c9707d",
-  zigzag: "#e7c85c",
-  diver: "#e7a15c",
-  tank: "#8f6fd1",
+  straight: ENEMY_PALETTE.straight.base,
+  zigzag: ENEMY_PALETTE.zigzag.base,
+  diver: ENEMY_PALETTE.diver.glow,
+  tank: ENEMY_PALETTE.tank.base,
+};
+
+const PLAYER_PALETTE = {
+  hullLight: "#7fe0a0",
+  hullDark: "#2f8f55",
+  accent: "#6ba5fb",
+  flame: "#f7d787",
+  flameHot: "#fff3d0",
 };
 
 const POWERUP_LABEL: Record<PowerUpType, string> = {
@@ -192,6 +230,304 @@ const POWERUP_COLOR: Record<PowerUpType, string> = {
   shield: "#7fa8d8",
   wingman: "#a3e07f",
 };
+
+type SpriteKind = "player" | "wingman" | "straight" | "zigzag" | "diver" | "tank";
+
+/**
+ * Offscreen sprite cache. Every ship/enemy silhouette (including its glow)
+ * is expensive to path and shadowBlur, so each (kind, half-size, DPR) combo
+ * is drawn exactly once onto its own small canvas here and then blitted
+ * with `drawImage` every frame after — a blit is orders of magnitude
+ * cheaper than re-building a gradient-filled, shadow-blurred path 30+ times
+ * a frame. Only per-frame *variation* (banking tilt, engine flicker, hit
+ * flash, dive glow) is drawn live on top of the cached blit. Padding around
+ * each sprite leaves room for the glow to bleed past the silhouette without
+ * clipping.
+ */
+const SPRITE_PAD = 1.9;
+const spriteCache = new Map<string, HTMLCanvasElement>();
+
+function getSprite(kind: SpriteKind, half: number, dpr: number): { canvas: HTMLCanvasElement; pad: number } {
+  const pad = half * SPRITE_PAD;
+  const key = `${kind}:${half}:${dpr}`;
+  let canvas = spriteCache.get(key);
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    const px = Math.max(1, Math.ceil(pad * 2 * dpr));
+    canvas.width = px;
+    canvas.height = px;
+    const sctx = canvas.getContext("2d");
+    if (sctx) {
+      sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      sctx.translate(pad, pad);
+      paintSprite(sctx, kind, half);
+    }
+    spriteCache.set(key, canvas);
+  }
+  return { canvas, pad };
+}
+
+function blitSprite(
+  ctx: CanvasRenderingContext2D,
+  kind: SpriteKind,
+  x: number,
+  y: number,
+  half: number,
+  dpr: number,
+  opts?: { angle?: number; alpha?: number },
+) {
+  const { canvas, pad } = getSprite(kind, half, dpr);
+  ctx.save();
+  ctx.translate(x, y);
+  if (opts?.angle) ctx.rotate(opts.angle);
+  if (opts?.alpha !== undefined) ctx.globalAlpha = opts.alpha;
+  ctx.drawImage(canvas, -pad, -pad, pad * 2, pad * 2);
+  ctx.restore();
+}
+
+/** Body-only silhouette for one sprite kind, drawn once into local space
+ * centered on (0, 0) with "up" (the direction of travel / fire) as -y. */
+function paintSprite(ctx: CanvasRenderingContext2D, kind: SpriteKind, half: number) {
+  switch (kind) {
+    case "player":
+    case "wingman":
+      paintDeltaWing(ctx, half, kind === "wingman");
+      return;
+    case "straight":
+      paintDrifter(ctx, half);
+      return;
+    case "zigzag":
+      paintZigzag(ctx, half);
+      return;
+    case "diver":
+      paintDiver(ctx, half);
+      return;
+    case "tank":
+      paintTank(ctx, half);
+      return;
+  }
+}
+
+/** The brand delta-wing (assets/brand/logo.svg), rendered as a layered hull
+ * with a two-tone gradient, wing-edge highlights, and a cockpit canopy
+ * glint. `dim` renders the smaller wingman variant: same geometry, cooler
+ * and lower-contrast so it reads as backup rather than the lead ship. */
+function paintDeltaWing(ctx: CanvasRenderingContext2D, half: number, dim: boolean) {
+  const nose = { x: 0, y: -half * 1.2 };
+  const rightTip = { x: half * 1.05, y: half * 0.6 };
+  const notch = { x: 0, y: half * 0.18 };
+  const leftTip = { x: -half * 1.05, y: half * 0.6 };
+
+  const hull = ctx.createLinearGradient(0, nose.y, 0, rightTip.y);
+  hull.addColorStop(0, dim ? "#bfe8cd" : PLAYER_PALETTE.hullLight);
+  hull.addColorStop(1, dim ? "#3f6b52" : PLAYER_PALETTE.hullDark);
+
+  if (!dim) {
+    ctx.save();
+    ctx.shadowColor = "rgba(127,224,160,0.55)";
+    ctx.shadowBlur = half * 0.9;
+    ctx.fillStyle = hull;
+    ctx.beginPath();
+    ctx.moveTo(nose.x, nose.y);
+    ctx.lineTo(rightTip.x, rightTip.y);
+    ctx.lineTo(notch.x, notch.y);
+    ctx.lineTo(leftTip.x, leftTip.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.globalAlpha = dim ? 0.82 : 1;
+  ctx.fillStyle = hull;
+  ctx.beginPath();
+  ctx.moveTo(nose.x, nose.y);
+  ctx.lineTo(rightTip.x, rightTip.y);
+  ctx.lineTo(notch.x, notch.y);
+  ctx.lineTo(leftTip.x, leftTip.y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Leading-edge highlights on both wings — a thin bright stroke along the
+  // nose-to-wingtip edge sells the hull as faceted metal, not a flat fill.
+  ctx.strokeStyle = dim ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.55)";
+  ctx.lineWidth = Math.max(0.6, half * 0.06);
+  ctx.beginPath();
+  ctx.moveTo(nose.x, nose.y);
+  ctx.lineTo(rightTip.x, rightTip.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(nose.x, nose.y);
+  ctx.lineTo(leftTip.x, leftTip.y);
+  ctx.stroke();
+
+  // Center spine (keel) — a dark line from nose to the rear notch, breaking
+  // up the flat fill and hinting at a two-hull cross-section.
+  ctx.strokeStyle = dim ? "rgba(20,40,30,0.35)" : "rgba(20,40,30,0.5)";
+  ctx.lineWidth = Math.max(0.5, half * 0.05);
+  ctx.beginPath();
+  ctx.moveTo(nose.x, nose.y * 0.3);
+  ctx.lineTo(notch.x, notch.y);
+  ctx.stroke();
+
+  // Cockpit canopy glint, just aft of the nose.
+  ctx.fillStyle = dim ? "rgba(255,255,255,0.35)" : PLAYER_PALETTE.accent;
+  ctx.globalAlpha = dim ? 0.55 : 0.85;
+  ctx.beginPath();
+  ctx.ellipse(0, nose.y * 0.32, half * 0.16, half * 0.28, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.7)";
+  ctx.beginPath();
+  ctx.ellipse(-half * 0.05, nose.y * 0.4, half * 0.06, half * 0.1, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+/** drifter: a small, angular dart — the plainest silhouette in the fleet,
+ * on purpose, so it reads as background chaff next to the sharper roles. */
+function paintDrifter(ctx: CanvasRenderingContext2D, half: number) {
+  const p = ENEMY_PALETTE.straight;
+  const grad = ctx.createLinearGradient(0, -half, 0, half);
+  grad.addColorStop(0, p.light);
+  grad.addColorStop(1, p.dark);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(0, half);
+  ctx.lineTo(half * 0.85, -half * 0.75);
+  ctx.lineTo(0, -half * 0.35);
+  ctx.lineTo(-half * 0.85, -half * 0.75);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.25)";
+  ctx.lineWidth = Math.max(0.5, half * 0.05);
+  ctx.stroke();
+  // Dim engine dot — this role never lights up the frame.
+  ctx.fillStyle = "rgba(70,90,120,0.7)";
+  ctx.beginPath();
+  ctx.arc(0, half * 0.85, half * 0.16, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/** zigzag: an asymmetric swept wing (longer on one side) so the erratic
+ * motion reads as a deliberate silhouette rather than a spinning dart. */
+function paintZigzag(ctx: CanvasRenderingContext2D, half: number) {
+  const p = ENEMY_PALETTE.zigzag;
+  const grad = ctx.createLinearGradient(0, -half, 0, half);
+  grad.addColorStop(0, p.light);
+  grad.addColorStop(1, p.dark);
+  ctx.save();
+  ctx.shadowColor = "rgba(247,167,59,0.45)";
+  ctx.shadowBlur = half * 0.5;
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(0, -half * 0.9);
+  ctx.lineTo(half * 1.15, half * 0.55);
+  ctx.lineTo(half * 0.15, half * 0.75);
+  ctx.lineTo(-half * 0.7, half * 0.3);
+  ctx.lineTo(-half * 0.2, -half * 0.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  // Amber accent along the long (right) sweep.
+  ctx.strokeStyle = p.glow;
+  ctx.lineWidth = Math.max(0.6, half * 0.09);
+  ctx.beginPath();
+  ctx.moveTo(0, -half * 0.9);
+  ctx.lineTo(half * 1.15, half * 0.55);
+  ctx.stroke();
+}
+
+/** diver: a narrow arrowhead. The nose carries a red-tinged glow that this
+ * function only bakes in dimly — the live per-frame overlay in `draw()`
+ * intensifies it as the enemy commits to its dive toward the player. */
+function paintDiver(ctx: CanvasRenderingContext2D, half: number) {
+  const p = ENEMY_PALETTE.diver;
+  const grad = ctx.createLinearGradient(0, -half, 0, half);
+  grad.addColorStop(0, p.light);
+  grad.addColorStop(1, p.dark);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(0, -half * 1.3);
+  ctx.lineTo(half * 0.55, half * 0.7);
+  ctx.lineTo(0, half * 0.3);
+  ctx.lineTo(-half * 0.55, half * 0.7);
+  ctx.closePath();
+  ctx.fill();
+  ctx.save();
+  ctx.shadowColor = p.glow;
+  ctx.shadowBlur = half * 0.6;
+  ctx.fillStyle = p.glow;
+  ctx.globalAlpha = 0.75;
+  ctx.beginPath();
+  ctx.arc(0, -half * 1.05, half * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** tank/boss: a chunky twin-hull silhouette — two side-by-side pods joined
+ * by a center plate, plating seams, amber danger stripes, and a paired
+ * engine glow. Visibly heavier than every other role. */
+function paintTank(ctx: CanvasRenderingContext2D, half: number) {
+  const p = ENEMY_PALETTE.tank;
+  const grad = ctx.createLinearGradient(0, -half, 0, half);
+  grad.addColorStop(0, p.light);
+  grad.addColorStop(1, p.dark);
+
+  const hullPath = (offsetX: number) => {
+    ctx.beginPath();
+    ctx.moveTo(offsetX, -half * 0.95);
+    ctx.lineTo(offsetX + half * 0.55, -half * 0.25);
+    ctx.lineTo(offsetX + half * 0.5, half * 0.85);
+    ctx.lineTo(offsetX - half * 0.5, half * 0.85);
+    ctx.lineTo(offsetX - half * 0.55, -half * 0.25);
+    ctx.closePath();
+  };
+
+  ctx.save();
+  ctx.shadowColor = "rgba(201,165,255,0.4)";
+  ctx.shadowBlur = half * 0.5;
+  ctx.fillStyle = grad;
+  hullPath(-half * 0.42);
+  ctx.fill();
+  hullPath(half * 0.42);
+  ctx.fill();
+  ctx.restore();
+
+  // Center connecting plate.
+  ctx.fillStyle = p.dark;
+  ctx.fillRect(-half * 0.28, -half * 0.15, half * 0.56, half * 0.9);
+
+  // Plating seams.
+  ctx.strokeStyle = "rgba(0,0,0,0.35)";
+  ctx.lineWidth = Math.max(0.6, half * 0.05);
+  for (const offsetX of [-half * 0.42, half * 0.42]) {
+    ctx.beginPath();
+    ctx.moveTo(offsetX - half * 0.5, half * 0.15);
+    ctx.lineTo(offsetX + half * 0.5, half * 0.15);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(offsetX - half * 0.48, half * 0.45);
+    ctx.lineTo(offsetX + half * 0.48, half * 0.45);
+    ctx.stroke();
+  }
+
+  // Amber danger stripes across the nose.
+  ctx.strokeStyle = ENEMY_PALETTE.zigzag.glow;
+  ctx.lineWidth = Math.max(0.8, half * 0.08);
+  for (const offsetX of [-half * 0.42, half * 0.42]) {
+    ctx.beginPath();
+    ctx.moveTo(offsetX - half * 0.4, -half * 0.35);
+    ctx.lineTo(offsetX + half * 0.15, -half * 0.7);
+    ctx.stroke();
+  }
+
+  // Paired engines.
+  ctx.fillStyle = "rgba(90,70,140,0.85)";
+  for (const offsetX of [-half * 0.42, half * 0.42]) {
+    ctx.beginPath();
+    ctx.arc(offsetX, half * 0.85, half * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
 
 export function TarmacDefense({ onExit }: { onExit: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -276,6 +612,8 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
         maxHp: hp,
         grazed: false,
         flashUntil: 0,
+        zigSign: 0,
+        zigFlashUntil: 0,
       });
     };
 
@@ -335,11 +673,15 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
             }
           };
           shootFrom(state.playerX);
+          state.muzzleFlashes.push({ x: state.playerX, until: time + 70 });
           for (let i = 0; i < state.wingmen; i += 1) {
-            shootFrom(state.playerX + (i === 0 ? -WINGMAN_OFFSET : WINGMAN_OFFSET));
+            const wx = state.playerX + (i === 0 ? -WINGMAN_OFFSET : WINGMAN_OFFSET);
+            shootFrom(wx);
+            state.muzzleFlashes.push({ x: wx, until: time + 70 });
           }
           playGameSound("shoot");
         }
+        state.muzzleFlashes = state.muzzleFlashes.filter((m) => time < m.until);
 
         if (state.comboTimer > 0) {
           state.comboTimer -= 1;
@@ -360,7 +702,14 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
 
         for (const e of state.enemies) {
           e.t += 1;
-          if (e.type === "zigzag") e.x += Math.sin(e.t * 0.08) * 2.2;
+          if (e.type === "zigzag") {
+            e.x += Math.sin(e.t * 0.08) * 2.2;
+            const sign = Math.sign(Math.cos(e.t * 0.08));
+            if (sign !== 0 && e.zigSign !== 0 && sign !== e.zigSign) {
+              e.zigFlashUntil = time + 150;
+            }
+            if (sign !== 0) e.zigSign = sign;
+          }
           if (e.type === "diver") {
             const dx = state.playerX - e.x;
             e.x += Math.sign(dx) * Math.min(Math.abs(dx), 1.6);
@@ -439,6 +788,7 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
 
       state.stripeOffset = (state.stripeOffset + 1.5) % 40;
       draw(ctx, state, time, reducedMotionRef.current);
+      state.prevPlayerX = state.playerX;
     };
 
     raf = requestAnimationFrame(tick);
@@ -527,9 +877,26 @@ function draw(ctx: CanvasRenderingContext2D, state: GameState, time: number, red
   ctx.setLineDash([]);
 
   const py = HEIGHT - 30;
-  drawShip(ctx, state.playerX, py, PLAYER_HALF, "#7fd88f");
+
+  // Banking tilt: rotate a few degrees toward the direction of lateral
+  // travel, derived from last frame's position rather than stored velocity
+  // so this stays pure rendering with zero engine involvement.
+  const vx = state.playerX - state.prevPlayerX;
+  const bankAngle = Math.max(-0.24, Math.min(0.24, vx * 0.045));
+
+  // Engine flicker: time-based, damped under reduced motion. Drawn live
+  // (not baked into the sprite) so it can flutter every frame.
+  const flicker = reducedMotion
+    ? 0.85 + Math.sin(time * 0.006) * 0.06
+    : 0.75 + Math.sin(time * 0.02) * 0.18 + Math.sin(time * 0.055) * 0.1;
+
+  drawEngineFlame(ctx, state.playerX, py, PLAYER_HALF, flicker, 1);
+  blitSprite(ctx, "player", state.playerX, py, PLAYER_HALF, dpr, { angle: bankAngle });
   for (let i = 0; i < state.wingmen; i += 1) {
-    drawShip(ctx, state.playerX + (i === 0 ? -WINGMAN_OFFSET : WINGMAN_OFFSET), py + 4, PLAYER_HALF * 0.72, "#9fe0ac");
+    const wx = state.playerX + (i === 0 ? -WINGMAN_OFFSET : WINGMAN_OFFSET);
+    const wHalf = PLAYER_HALF * 0.72;
+    drawEngineFlame(ctx, wx, py + 4, wHalf, flicker, 0.7);
+    blitSprite(ctx, "wingman", wx, py + 4, wHalf, dpr, { angle: bankAngle * 0.8, alpha: 0.85 });
   }
   if (state.shieldCharges > 0) {
     ctx.strokeStyle = "rgba(127,168,216,0.8)";
@@ -539,27 +906,79 @@ function draw(ctx: CanvasRenderingContext2D, state: GameState, time: number, red
     ctx.stroke();
   }
 
+  for (const m of state.muzzleFlashes) {
+    const pct = Math.max(0, (m.until - time) / 70);
+    if (pct <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = pct;
+    ctx.fillStyle = PLAYER_PALETTE.flameHot;
+    ctx.beginPath();
+    ctx.ellipse(m.x, py - PLAYER_HALF * 1.3, 3.5 * pct + 1, 7 * pct + 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   ctx.fillStyle = "#e8ecf1";
   for (const b of state.bullets) ctx.fillRect(b.x - 1.5, b.y - 6, 3, 8);
 
   for (const e of state.enemies) {
-    const flashing = time < e.flashUntil;
-    ctx.fillStyle = flashing ? "#ffffff" : ENEMY_COLOR[e.type];
     const size = e.type === "tank" ? 16 : 9;
-    ctx.beginPath();
-    ctx.moveTo(e.x, e.y + size);
-    ctx.lineTo(e.x + size, e.y - size * 0.67);
-    ctx.lineTo(e.x - size, e.y - size * 0.67);
-    ctx.closePath();
-    ctx.fill();
+    blitSprite(ctx, e.type, e.x, e.y, size, dpr);
+
+    if (e.type === "diver") {
+      // Dive glow intensifies the deeper the diver has committed to its run.
+      const intensity = Math.max(0, Math.min(1, e.y / HEIGHT));
+      ctx.save();
+      ctx.globalAlpha = 0.3 + intensity * 0.6;
+      ctx.shadowColor = ENEMY_PALETTE.diver.glow;
+      ctx.shadowBlur = size * (0.6 + intensity * 1.2);
+      ctx.fillStyle = ENEMY_PALETTE.diver.glow;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y - size * 1.05, size * (0.16 + intensity * 0.14), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (e.type === "zigzag" && time < e.zigFlashUntil) {
+      const pct = Math.max(0, (e.zigFlashUntil - time) / 150);
+      ctx.save();
+      ctx.globalAlpha = pct * 0.8;
+      ctx.fillStyle = ENEMY_PALETTE.zigzag.glow;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y + size * 0.75, size * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    const flashing = time < e.flashUntil;
+    if (flashing) {
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      ctx.globalCompositeOperation = "lighter";
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, size * 0.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     if (e.type === "tank") {
-      const barW = 34;
+      const barW = 36;
+      const barH = 5;
+      const barX = e.x - barW / 2;
+      const barY = e.y - size - 12;
       const pct = Math.max(0, e.hp / e.maxHp);
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.fillRect(e.x - barW / 2, e.y - size - 10, barW, 4);
-      ctx.fillStyle = pct > 0.4 ? "#8fd88f" : "#e07f7f";
-      ctx.fillRect(e.x - barW / 2, e.y - size - 10, barW * pct, 4);
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      roundRect(ctx, barX, barY, barW, barH, 2.5);
+      ctx.fill();
+      const low = pct <= 0.4;
+      ctx.fillStyle = low ? ENEMY_PALETTE.diver.glow : "#52cd7d";
+      if (pct > 0) {
+        roundRect(ctx, barX, barY, Math.max(barH, barW * pct), barH, 2.5);
+        ctx.fill();
+      }
+      ctx.strokeStyle = "rgba(255,255,255,0.25)";
+      ctx.lineWidth = 0.75;
+      roundRect(ctx, barX, barY, barW, barH, 2.5);
+      ctx.stroke();
     }
   }
 
@@ -577,9 +996,16 @@ function draw(ctx: CanvasRenderingContext2D, state: GameState, time: number, red
 
   if (!reducedMotion || state.particles.length < 6) {
     for (const p of state.particles) {
-      ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
-      ctx.fillStyle = p.color;
-      ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+      const alpha = Math.max(0, p.life / p.maxLife);
+      const radius = 1.5 + (1 - alpha) * 1.8;
+      ctx.globalAlpha = alpha;
+      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius * 2);
+      glow.addColorStop(0, p.color);
+      glow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius * 2, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -623,15 +1049,45 @@ function draw(ctx: CanvasRenderingContext2D, state: GameState, time: number, red
   }
 }
 
-function drawShip(ctx: CanvasRenderingContext2D, x: number, y: number, half: number, color: string) {
-  ctx.fillStyle = color;
+/** Animated engine flame trailing a ship's rear notch. Drawn live (not
+ * cached) since `flicker` varies every frame; `strength` dims the wingman
+ * variant. `flicker` is a ~[0.55, 1.05] multiplier on flame length/opacity. */
+function drawEngineFlame(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  half: number,
+  flicker: number,
+  strength: number,
+) {
+  const rearY = y + half * 0.5;
+  const length = half * (0.9 + flicker * 0.7) * strength;
+  const width = half * 0.42 * strength;
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, 0.55 + flicker * 0.35) * strength;
+  const grad = ctx.createLinearGradient(x, rearY, x, rearY + length);
+  grad.addColorStop(0, PLAYER_PALETTE.flameHot);
+  grad.addColorStop(0.45, PLAYER_PALETTE.flame);
+  grad.addColorStop(1, "rgba(247,215,135,0)");
+  ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.moveTo(x, y - half);
-  ctx.lineTo(x + half, y + half * 0.8);
-  ctx.lineTo(x, y + half * 0.3);
-  ctx.lineTo(x - half, y + half * 0.8);
+  ctx.moveTo(x - width, rearY);
+  ctx.quadraticCurveTo(x, rearY + length * 1.15, x + width, rearY);
   ctx.closePath();
   ctx.fill();
+  ctx.restore();
+}
+
+/** Rounded-rect path helper for the tank HP bar. */
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
 }
 
 function overlay(ctx: CanvasRenderingContext2D, width: number, height: number, title: string, subtitle: string) {
