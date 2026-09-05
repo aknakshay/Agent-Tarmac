@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod claude_bin;
 pub mod pop_out;
 pub mod pty_manager;
 pub mod session_index;
@@ -11,15 +12,16 @@ use std::process::Command;
 use std::sync::Mutex;
 use tauri::Manager;
 
-/// Checks whether the `claude` binary (or `AGENT_TARMAC_CLAUDE_BIN` override,
-/// same knob `pty_manager::claude_program` reads) is runnable, for the
-/// sidebar's "no sessions found" empty-state hint. Returns the version
-/// string on success, `None` if the binary isn't on PATH or exits non-zero —
-/// either way, never an error the frontend has to handle, since "not
-/// installed" is an expected, common state here (not a failure).
+/// Checks whether the `claude` binary (resolved via
+/// `claude_bin::claude_program`, same resolution `pty_manager::claude_program`
+/// uses) is runnable, for the sidebar's "no sessions found" empty-state
+/// hint. Returns the version string on success, `None` if the binary isn't
+/// found or exits non-zero — either way, never an error the frontend has to
+/// handle, since "not installed" is an expected, common state here (not a
+/// failure).
 #[tauri::command]
 fn check_claude() -> Option<String> {
-    let bin = pty_manager::claude_program();
+    let bin = claude_bin::claude_program();
     let output = Command::new(&bin).arg("--version").output().ok()?;
     if !output.status.success() {
         return None;

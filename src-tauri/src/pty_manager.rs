@@ -97,7 +97,10 @@ impl PtyManager {
         cmd.args(&spec.args);
         cmd.cwd(&spec.cwd);
 
-        let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| crate::claude_bin::spawn_error_hint(&spec.program, e.to_string()))?;
         // Drop the slave end in this process so EOF is detected correctly.
         drop(pair.slave);
 
@@ -292,8 +295,11 @@ impl PtyManager {
     }
 }
 
+/// Re-exported for callers that only import from `pty_manager` (spawn sites
+/// and `check_claude` all want the same resolved binary). See
+/// `claude_bin::claude_program` for the resolution order and caching.
 pub fn claude_program() -> String {
-    std::env::var("AGENT_TARMAC_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
+    crate::claude_bin::claude_program()
 }
 
 #[derive(Clone, Serialize)]
