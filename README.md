@@ -87,14 +87,14 @@ FleetCode is the closest competitor — multi-session embedded terminals with `-
 
 ## Roadmap
 
-Post-v1, tracked as GitHub issues once this repo is public:
+Tracked as GitHub issues:
 
+- **Next up: signed auto-update** — one-click in-place updates (the in-app check currently notifies and links to the GitHub release page)
 - Git-worktree isolation per session
 - Codex and Gemini backend support
 - tmux backend (alternative to the native PTY manager)
 - Tier-3 hooks integration
 - Token/cost telemetry
-- Signed auto-update (the in-app update check currently only links to the GitHub release page)
 - Settings pane (notification toggle, clear-metadata action)
 - Web/mobile remote access
 - Linux/Windows support
