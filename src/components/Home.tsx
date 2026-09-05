@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useDeck } from "../store";
 import { computeFleetStats, type SparklineDay } from "../lib/stats";
 import { Logo, RunwayDivider } from "./icons/BrandMotifs";
+import { TarmacDefense } from "./TarmacDefense";
 
 /**
  * Replaces the "no session selected" placeholder. A calm fleet overview —
@@ -16,6 +17,11 @@ export function Home() {
 
   const stats = useMemo(() => computeFleetStats(sessions, projectNames), [sessions, projectNames]);
   const allQuiet = stats.rightNow.live === 0;
+  const [playing, setPlaying] = useState(false);
+
+  if (playing) {
+    return <TarmacDefense onExit={() => setPlaying(false)} />;
+  }
 
   return (
     <div className="thin-scrollbar h-full overflow-y-auto px-8 py-12">
@@ -75,6 +81,14 @@ export function Home() {
             <StatTile label="Projects" value={stats.totals.projects} tone="neutral" />
           </div>
         </section>
+
+        <button
+          type="button"
+          onClick={() => setPlaying(true)}
+          className="self-center rounded-md px-3 py-1.5 text-xs text-ink-faint transition-colors duration-150 hover:text-ink-muted"
+        >
+          Play Tarmac Defense
+        </button>
       </div>
     </div>
   );
