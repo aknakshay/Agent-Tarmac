@@ -1,9 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useDeck } from "../store";
-import { ensureOpened, getOrCreateTerminal } from "../terminals";
+import { ensureOpened, getOrCreateTerminal, writeInfoLine } from "../terminals";
 import { basename } from "../lib/paths";
 import type { Session } from "../types";
+
+interface PopOutResult {
+  app: "ghostty" | "terminal";
+}
 
 const STATUS_DOT_CLASS: Record<Session["status"], string> = {
   working: "bg-working animate-pulse",
@@ -81,13 +85,30 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
   const title = session?.title || "Untitled session";
   const project = basename(session?.cwd ?? null);
   const status = session?.status ?? "dormant";
+  const cwd = session?.cwd ?? null;
   const [stopping, setStopping] = useState(false);
+  const [poppingOut, setPoppingOut] = useState(false);
+  const [popOutError, setPopOutError] = useState<string | null>(null);
 
   const handleStop = () => {
     setStopping(true);
     invoke("stop_session", { sessionId })
       .catch((err) => console.error(`stop_session failed for session ${sessionId}`, err))
       .finally(() => setStopping(false));
+  };
+
+  const handlePopOut = () => {
+    setPoppingOut(true);
+    setPopOutError(null);
+    invoke<PopOutResult>("pop_out_to_ghostty", { sessionId })
+      .then((result) => {
+        writeInfoLine(
+          sessionId,
+          `popped out to ${result.app === "ghostty" ? "Ghostty" : "Terminal"} — this pane is now read-only until resumed here`,
+        );
+      })
+      .catch((err) => setPopOutError(String(err)))
+      .finally(() => setPoppingOut(false));
   };
 
   return (
@@ -102,6 +123,20 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
           ·
         </span>
         <span className="truncate text-xs text-ink-faint">{project}</span>
+        {cwd && (
+          <button
+            type="button"
+            title="Open in Ghostty"
+            onClick={handlePopOut}
+            disabled={poppingOut}
+            className={`flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-ink-muted transition-colors duration-100 hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 ${
+              status !== "dormant" ? "" : "ml-auto"
+            }`}
+          >
+            <PopOutIcon />
+            Open in Ghostty
+          </button>
+        )}
         {status !== "dormant" && (
           <button
             type="button"
@@ -124,6 +159,14 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
             Couldn't resume this session: {resumeError}
           </div>
         )}
+        {popOutError && (
+          <div
+            role="alert"
+            className="absolute inset-x-2 top-2 rounded-md border border-needs-you/40 bg-surface px-3 py-2 text-xs text-needs-you"
+          >
+            Couldn't pop out to Ghostty: {popOutError}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -137,6 +180,20 @@ function StopIcon() {
       aria-hidden="true"
     >
       <rect x="4" y="4" width="8" height="8" rx="1.5" />
+    </svg>
+  );
+}
+
+function PopOutIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3 w-3 shrink-0 fill-none stroke-current"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path d="M6 3H3.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V10" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 3h4v4M13 3 7 9" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

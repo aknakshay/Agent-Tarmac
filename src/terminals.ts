@@ -132,3 +132,10 @@ export function writeExited(sessionId: string): void {
   if (!entry) return;
   entry.term.write("\r\n\x1b[2m[session exited]\x1b[0m\r\n");
 }
+
+/** Writes a dim, non-PTY informational line into a session's terminal. */
+export function writeInfoLine(sessionId: string, text: string): void {
+  const entry = registry.get(sessionId);
+  if (!entry) return;
+  entry.term.write(`\r\n\x1b[2m[${text}]\x1b[0m\r\n`);
+}

@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod pop_out;
 pub mod pty_manager;
 pub mod session_index;
 pub mod status_loop;
@@ -26,6 +27,7 @@ pub fn run() {
             workspace_store::Workspace::default(),
         )))
         .manage(pty_manager::PtyManager::default())
+        .manage(pop_out::ExternalSessions::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             session_index::list_sessions,
@@ -35,7 +37,8 @@ pub fn run() {
             pty_manager::start_new_session,
             pty_manager::stop_session,
             pty_manager::write_stdin,
-            pty_manager::resize_pty
+            pty_manager::resize_pty,
+            pop_out::pop_out_to_ghostty
         ])
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());

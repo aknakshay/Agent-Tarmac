@@ -3,6 +3,7 @@
 //! `session_status_changed` whenever a session's status changes.
 
 use crate::activity::{derive_status, tail_looks_like_prompt, Status, StatusInputs};
+use crate::pop_out::ExternalSessions;
 use crate::pty_manager::PtyManager;
 use crate::session_index::SessionIndexState;
 use chrono::Utc;
@@ -14,6 +15,12 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const TICK_INTERVAL: Duration = Duration::from_secs(2);
 const IDLE_AFTER_SECS: u64 = 300;
+/// An externally-tracked (popped-out) session counts as running only while
+/// its transcript is still being actively written to.
+const EXTERNAL_FRESH_SECS: u64 = 15;
+/// Once a popped-out session's transcript has been quiet this long, assume
+/// the external terminal was closed and stop tracking it.
+const EXTERNAL_STALE_SECS: u64 = 600;
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -50,15 +57,35 @@ fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: boo
         return;
     };
 
+    let external = app.try_state::<ExternalSessions>();
+
     let now = Utc::now();
 
     for session in sessions {
         let pty_running = pty_manager.is_running(&session.id);
-        // Task 12 extends this with external session tracking.
-        let running = pty_running;
+
+        let transcript_secs = (now - session.last_activity).num_seconds().max(0) as u64;
+
+        // A popped-out session has no PtyManager handle (it's an external
+        // process), so its only liveness signal is transcript freshness:
+        // treat it as running while claude is actively writing to the
+        // transcript, and stop tracking it once that goes stale (the
+        // external terminal was presumably closed).
+        let external_running = match &external {
+            Some(external) if external.contains(&session.id) => {
+                if transcript_secs > EXTERNAL_STALE_SECS {
+                    external.remove(&session.id);
+                    false
+                } else {
+                    transcript_secs < EXTERNAL_FRESH_SECS
+                }
+            }
+            _ => false,
+        };
+
+        let running = pty_running || external_running;
 
         let pty_secs = pty_manager.secs_since_output(&session.id);
-        let transcript_secs = (now - session.last_activity).num_seconds().max(0) as u64;
         let secs_since_activity = match pty_secs {
             Some(pty_secs) => pty_secs.min(transcript_secs),
             None => transcript_secs,
