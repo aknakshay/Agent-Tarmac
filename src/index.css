@@ -1,1 +1,37 @@
 @import "tailwindcss";
+
+/*
+  Claude Deck design tokens. Dark-first: this is a mission-control surface
+  meant to sit alongside a terminal, viewed for long stretches in low light.
+  Tinted neutrals lean toward the accent hue rather than pure gray.
+*/
+@theme {
+  --color-app-bg: oklch(18% 0.012 264);
+  --color-surface: oklch(21% 0.013 264);
+  --color-surface-hover: oklch(26% 0.015 264);
+  --color-border: oklch(29% 0.014 264);
+
+  --color-ink: oklch(95% 0.004 264);
+  --color-ink-muted: oklch(72% 0.012 264);
+  --color-ink-faint: oklch(50% 0.014 264);
+
+  --color-accent: oklch(72% 0.14 258);
+  --color-working: oklch(76% 0.16 152);
+  --color-needs-you: oklch(79% 0.15 70);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-app-bg);
+  color: var(--color-ink);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}

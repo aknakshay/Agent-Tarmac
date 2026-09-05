@@ -1,49 +1,49 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { useDeck } from "./store";
+import { Sidebar } from "./components/Sidebar";
+import type { SessionMeta, StatusChange } from "./types";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const setSessions = useDeck((state) => state.setSessions);
+  const setStatus = useDeck((state) => state.setStatus);
+  const hasSessions = useDeck((state) => Object.keys(state.sessions).length > 0);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  useEffect(() => {
+    let unlistenSessions: (() => void) | undefined;
+    let unlistenStatus: (() => void) | undefined;
+
+    invoke<SessionMeta[]>("list_sessions")
+      .then(setSessions)
+      .catch((err) => console.error("Failed to load sessions", err));
+
+    listen<SessionMeta[]>("sessions_updated", (event) => setSessions(event.payload)).then(
+      (fn) => (unlistenSessions = fn),
+    );
+
+    listen<StatusChange>("session_status_changed", (event) =>
+      setStatus(event.payload.sessionId, event.payload.status),
+    ).then((fn) => (unlistenStatus = fn));
+
+    return () => {
+      unlistenSessions?.();
+      unlistenStatus?.();
+    };
+  }, [setSessions, setStatus]);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div className="flex h-dvh w-full bg-app-bg text-ink">
+      <Sidebar />
+      <main className="flex flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
+        <span className="text-lg font-semibold text-ink">Claude Deck</span>
+        <p className="max-w-sm text-sm text-ink-faint">
+          {hasSessions
+            ? "Select a session from the sidebar to open its terminal."
+            : "Waiting for Claude Code sessions to appear."}
+        </p>
+      </main>
+    </div>
   );
 }
 
