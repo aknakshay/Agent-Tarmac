@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod pty_manager;
 pub mod session_index;
+pub mod status_loop;
 pub mod transcript;
 pub mod workspace_store;
 
@@ -37,6 +38,7 @@ pub fn run() {
         ])
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());
+            status_loop::start(app.handle().clone());
 
             let workspace_path = workspace_store::workspace_path(app.handle())?;
             let workspace = workspace_store::load(&workspace_path);

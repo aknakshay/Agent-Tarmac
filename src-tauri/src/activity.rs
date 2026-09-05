@@ -1,9 +1,7 @@
 //! Pure activity status derivation for a Claude Code session.
 //!
-//! Nothing here touches Tauri, threads, or I/O — Task 7 wires this into the
-//! session poller. `#[allow(dead_code)]` below exists only until that
-//! consumer lands; Task 7 must remove it.
-#![allow(dead_code)]
+//! Nothing here touches Tauri, threads, or I/O — `status_loop` wires this
+//! into the session poller.
 
 use serde::Serialize;
 
