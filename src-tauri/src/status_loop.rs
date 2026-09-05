@@ -6,12 +6,15 @@ use crate::activity::{derive_status, tail_looks_like_prompt, Status, StatusInput
 use crate::pop_out::ExternalSessions;
 use crate::pty_manager::PtyManager;
 use crate::session_index::SessionIndexState;
+use crate::transcript::SessionMeta;
 use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 const TICK_INTERVAL: Duration = Duration::from_secs(2);
 const IDLE_AFTER_SECS: u64 = 300;
@@ -29,6 +32,32 @@ pub struct StatusChange {
     pub status: Status,
 }
 
+/// Whether a transition into `new` should fire a native "needs you"
+/// notification. Pure so the transition matrix can be table-tested without
+/// standing up a Tauri app.
+///
+/// - The first tick's statuses are initial state, not events, so it never
+///   notifies (`first_tick`).
+/// - Only a transition INTO `NeedsYou` from a different prior status fires;
+///   a session that's already `NeedsYou` (or has no prior status recorded)
+///   does not re-fire on every unchanged tick.
+/// - Skipped while the main window is focused — the in-app badge covers
+///   that case.
+fn should_notify(
+    prev: Option<Status>,
+    new: Status,
+    first_tick: bool,
+    window_focused: bool,
+) -> bool {
+    if first_tick || window_focused {
+        return false;
+    }
+    if new != Status::NeedsYou {
+        return false;
+    }
+    matches!(prev, Some(Status::Working) | Some(Status::Idle))
+}
+
 /// Starts the status loop on a background thread. Call once from `.setup`,
 /// after the session watcher has been started.
 pub fn start(app: AppHandle) {
@@ -42,6 +71,35 @@ pub fn start(app: AppHandle) {
             thread::sleep(TICK_INTERVAL);
         }
     });
+}
+
+/// Fires a native OS notification for a session that just transitioned into
+/// `NeedsYou`. Never panics or propagates errors — a failed notification
+/// must not take down the status loop.
+///
+/// Note: macOS prompts for notification permission on first fire in a
+/// bundled app; under `tauri dev` (unsigned/unbundled) macOS may silently
+/// drop notifications entirely, so this can appear to do nothing there.
+fn notify_needs_you(app: &AppHandle, session: &SessionMeta) {
+    let title = if session.title.trim().is_empty() {
+        session.id.chars().take(8).collect::<String>()
+    } else {
+        session.title.clone()
+    };
+
+    let mut body = "needs your attention".to_string();
+    if let Some(cwd) = &session.cwd {
+        if let Some(name) = Path::new(cwd).file_name().and_then(|n| n.to_str()) {
+            body.push_str(&format!(" ({name})"));
+        }
+    }
+
+    let result = app.notification().builder().title(title).body(body).show();
+
+    if let Err(_e) = result {
+        #[cfg(debug_assertions)]
+        eprintln!("[status_loop] notification failed: {_e}");
+    }
 }
 
 fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: bool) {
@@ -60,6 +118,15 @@ fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: boo
     let external = app.try_state::<ExternalSessions>();
 
     let now = Utc::now();
+
+    // Focus is a window-level property, not per-session, so read it once per
+    // tick. `is_focused()` returning `Err` (e.g. window torn down) is
+    // treated as "not focused" — never suppress a notification on a lookup
+    // failure.
+    let window_focused = app
+        .get_webview_window("main")
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false);
 
     for session in sessions {
         let pty_running = pty_manager.is_running(&session.id);
@@ -102,7 +169,8 @@ fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: boo
             idle_after_secs: IDLE_AFTER_SECS,
         });
 
-        let changed = first_tick || previous.get(&session.id) != Some(&status);
+        let prev_status = previous.get(&session.id).copied();
+        let changed = first_tick || prev_status != Some(status);
         if changed {
             #[cfg(debug_assertions)]
             println!("[status_loop] {} -> {:?}", session.id, status);
@@ -115,6 +183,54 @@ fn tick(app: &AppHandle, previous: &mut HashMap<String, Status>, first_tick: boo
                 },
             );
         }
+
+        if should_notify(prev_status, status, first_tick, window_focused) {
+            notify_needs_you(app, &session);
+        }
+
         previous.insert(session.id.clone(), status);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_notify_table() {
+        let cases: Vec<(Option<Status>, Status, bool, bool, bool)> = vec![
+            // (prev, new, first_tick, window_focused, expected)
+            // First tick statuses are initial state, never an event.
+            (None, Status::NeedsYou, true, false, false),
+            (Some(Status::Working), Status::NeedsYou, true, false, false),
+            // Real transition into NeedsYou while unfocused: notify.
+            (Some(Status::Working), Status::NeedsYou, false, false, true),
+            (Some(Status::Idle), Status::NeedsYou, false, false, true),
+            // Same transition while the window is focused: the in-app
+            // badge covers it, skip.
+            (Some(Status::Working), Status::NeedsYou, false, true, false),
+            // Already NeedsYou, still NeedsYou: no repeat notification.
+            (
+                Some(Status::NeedsYou),
+                Status::NeedsYou,
+                false,
+                false,
+                false,
+            ),
+            // Not transitioning into NeedsYou at all.
+            (Some(Status::Working), Status::Idle, false, false, false),
+            // No prior status recorded (session appeared mid-run, not on
+            // first_tick) landing directly on NeedsYou: nothing to
+            // transition from, don't notify.
+            (None, Status::NeedsYou, false, false, false),
+        ];
+
+        for (prev, new, first_tick, window_focused, expected) in cases {
+            assert_eq!(
+                should_notify(prev, new, first_tick, window_focused),
+                expected,
+                "prev={prev:?} new={new:?} first_tick={first_tick} window_focused={window_focused}"
+            );
+        }
     }
 }
