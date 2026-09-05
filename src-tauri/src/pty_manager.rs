@@ -97,6 +97,15 @@ impl PtyManager {
         cmd.args(&spec.args);
         cmd.cwd(&spec.cwd);
 
+        // Hydrate the PTY child environment from the login shell so that
+        // Claude Code hooks (which call `node`), colours, and locale work
+        // correctly when the app is Finder-launched with a bare GUI env.
+        let env_overrides =
+            crate::claude_bin::pty_env_overrides(crate::claude_bin::login_shell_env());
+        for (key, val) in &env_overrides {
+            cmd.env(key, val);
+        }
+
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -212,7 +221,7 @@ impl PtyManager {
         };
 
         // portable-pty puts the child in its own session (setsid), so its
-        // pgid equals its pid — signal the whole process GROUP with
+        // pgid equals its pid -- signal the whole process GROUP with
         // killpg, not just the immediate child, so any children Claude
         // Code itself spawns (e.g. tool subprocesses) go down too.
         #[cfg(unix)]
@@ -392,7 +401,7 @@ pub fn start_new_session(
         },
     )?;
     // `new-*` placeholder ids are intentionally not persisted to
-    // live_session_ids — see workspace_store::add_live_session.
+    // live_session_ids -- see workspace_store::add_live_session.
     Ok(session_id)
 }
 
