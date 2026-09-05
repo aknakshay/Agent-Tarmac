@@ -35,3 +35,27 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+
+/*
+  Keyboard-focus visibility, applied last so it wins over any component's
+  `focus:outline-none` (which only targets `:focus`, not `:focus-visible`) —
+  a mouse click into a bordered input doesn't need a ring, but tabbing to
+  any interactive element always should show one.
+*/
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Respect the OS-level reduced-motion preference everywhere: status-dot
+   pulses, spinners, and transitions all collapse to instant. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

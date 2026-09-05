@@ -112,6 +112,9 @@ export const useDeck = create<DeckState>()((set, get) => ({
     const metaCache = get().metaCache;
     const favoriteIdsCache = get().favoriteIdsCache;
     const next: Record<string, Session> = {};
+    // meta.last_role is intentionally unused here: status ("working" /
+    // "needsYou" / etc.) flows exclusively through session_status_changed
+    // events (see setStatus), not derived from the transcript's last role.
     for (const meta of metas) {
       const prev = existing[meta.id];
       const cached = prev ? undefined : metaCache[meta.id];

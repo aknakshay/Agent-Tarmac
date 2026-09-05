@@ -83,6 +83,12 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
       if (timeout) clearTimeout(timeout);
       observer.disconnect();
     };
+    // `active` is intentionally in the dependency array: this effect (and
+    // its observer) is torn down and recreated on every active toggle, so
+    // the `if (active) doFit()` above re-runs and re-fits the terminal every
+    // time this pane regains focus — that's what keeps a background pane's
+    // stale xterm dimensions from showing on refocus, not an optimization
+    // to remove.
   }, [sessionId, active]);
 
   const title = session ? displayTitle(session) : "Untitled session";

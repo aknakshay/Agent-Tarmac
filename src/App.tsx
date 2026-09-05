@@ -8,6 +8,7 @@ import { CommandBar } from "./components/CommandBar";
 import { NewSessionDialog } from "./components/NewSessionDialog";
 import { RestoreBanner } from "./components/RestoreBanner";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { OnApproachIllustration } from "./components/icons/BrandMotifs";
 import { writeExited, writeOutput } from "./terminals";
 import type { SessionMeta, StatusChange } from "./types";
 import type { Workspace } from "./lib/workspaceMeta";
@@ -44,11 +45,15 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!e.metaKey) return;
 
+      // Any focused text input (a rename field, the command bar/new-session
+      // dialog inputs, or a contenteditable) should get the keystroke, not
+      // have it intercepted as a shortcut — checked generically rather than
+      // only while a modal is open, since sidebar/pane rename inputs are
+      // never modal.
       const target = e.target as HTMLElement | null;
-      const inModalInput =
-        (commandBarOpen || newSessionOpen) &&
+      const isEditableTarget =
         !!target &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
 
       if (e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -57,7 +62,7 @@ function App() {
         return;
       }
 
-      if (inModalInput) return;
+      if (isEditableTarget) return;
 
       if (e.shiftKey && e.key.toLowerCase() === "u") {
         e.preventDefault();
@@ -130,18 +135,21 @@ function App() {
         onOpenNewSession={() => setNewSessionOpen(true)}
       />
       <main className="relative flex-1">
-        <UpdateBanner />
-        <RestoreBanner />
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col">
+          <UpdateBanner />
+          <RestoreBanner />
+        </div>
         {openIds.map((id) => (
           <TerminalPane key={id} sessionId={id} active={id === activeId} />
         ))}
         {activeId === null && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
-            <span className="text-lg font-semibold text-ink">Claude Deck</span>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center">
+            <OnApproachIllustration className="h-40 w-60 opacity-90" />
+            <span className="text-lg font-semibold text-ink">Agent Tarmac</span>
             <p className="max-w-sm text-sm text-ink-faint">
               {hasSessions
                 ? "Select a session from the sidebar to open its terminal."
-                : "Waiting for Claude Code sessions to appear."}
+                : "Nothing on the board yet — waiting for Claude Code sessions to appear."}
             </p>
           </div>
         )}

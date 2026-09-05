@@ -7,13 +7,29 @@ pub mod transcript;
 pub mod update_check;
 pub mod workspace_store;
 
+use std::process::Command;
 use std::sync::Mutex;
 use tauri::Manager;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+/// Checks whether the `claude` binary (or `CLAUDE_DECK_CLAUDE_BIN` override,
+/// same knob `pty_manager::claude_program` reads) is runnable, for the
+/// sidebar's "no sessions found" empty-state hint. Returns the version
+/// string on success, `None` if the binary isn't on PATH or exits non-zero —
+/// either way, never an error the frontend has to handle, since "not
+/// installed" is an expected, common state here (not a failure).
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn check_claude() -> Option<String> {
+    let bin = pty_manager::claude_program();
+    let output = Command::new(&bin).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -31,7 +47,7 @@ pub fn run() {
         .manage(pty_manager::PtyManager::default())
         .manage(pop_out::ExternalSessions::default())
         .invoke_handler(tauri::generate_handler![
-            greet,
+            check_claude,
             session_index::list_sessions,
             workspace_store::get_workspace,
             workspace_store::set_workspace,

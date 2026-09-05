@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useDeck } from "../store";
 import type { Session } from "../types";
 import { SessionRow } from "./SessionRow";
 import { SessionContextMenu } from "./SessionContextMenu";
 import { basename } from "../lib/paths";
+import { Logo, OnApproachIllustration, RunwayDivider } from "./icons/BrandMotifs";
 
 const DORMANT_VISIBLE_LIMIT = 15;
 const FAVORITES_KEY = "__favorites__";
@@ -35,8 +37,19 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+  // "checking" until the one-shot `claude --version` probe resolves; only
+  // relevant for the empty-state hint below, so it's only kicked off once
+  // there are no sessions to show.
+  const [claudeCheck, setClaudeCheck] = useState<"checking" | "missing" | "found">("checking");
 
   const all = useMemo(() => Object.values(sessions), [sessions]);
+
+  useEffect(() => {
+    if (all.length > 0) return;
+    invoke<string | null>("check_claude")
+      .then((version) => setClaudeCheck(version ? "found" : "missing"))
+      .catch(() => setClaudeCheck("missing"));
+  }, [all.length]);
 
   const allTags = useMemo(() => {
     const set = new Set<string>();
@@ -113,8 +126,9 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
 
   return (
     <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-surface">
-      <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
-        <span className="flex-1 text-sm font-semibold text-ink">Claude Deck</span>
+      <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border px-3">
+        <Logo className="h-4 w-4 shrink-0 text-ink" />
+        <span className="flex-1 text-sm font-semibold text-ink">Agent Tarmac</span>
         <button
           type="button"
           onClick={onOpenCommandBar}
@@ -168,19 +182,31 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
       )}
 
       {all.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
-          <p className="text-sm font-medium text-ink-muted">No sessions yet</p>
-          <p className="text-xs text-ink-faint">Claude Code sessions will appear here as they start.</p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+          <OnApproachIllustration className="h-28 w-40 opacity-90" />
+          <p className="text-sm font-medium text-ink-muted">Tower's clear</p>
+          {claudeCheck === "missing" ? (
+            <p className="max-w-[220px] text-xs text-needs-you">
+              Couldn't find <code className="rounded bg-surface-hover px-1 py-0.5">claude</code> on your PATH.
+              Install the Claude Code CLI, or start a session and it'll appear here.
+            </p>
+          ) : (
+            <p className="text-xs text-ink-faint">Claude Code sessions will appear here as they start.</p>
+          )}
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto px-2 py-2">
           {groups.length === 0 && (
             <p className="px-2 py-3 text-center text-xs text-ink-faint">No sessions match the selected tags.</p>
           )}
-          {groups.map((group) => {
+          {groups.map((group, index) => {
             const isCollapsed = collapsedGroups.has(group.key);
+            // Divider after the Favorites group only — it's the one place two
+            // "live" groupings sit back to back (see motifs.md a).
+            const showDividerBefore = index > 0 && groups[index - 1].key === FAVORITES_KEY;
             return (
               <div key={group.key} className="mb-1">
+                {showDividerBefore && <RunwayDivider className="mb-2" />}
                 <button
                   type="button"
                   onClick={() => toggleGroup(group.key)}
