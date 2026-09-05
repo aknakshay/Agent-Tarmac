@@ -11,24 +11,23 @@ function App() {
   const hasSessions = useDeck((state) => Object.keys(state.sessions).length > 0);
 
   useEffect(() => {
-    let unlistenSessions: (() => void) | undefined;
-    let unlistenStatus: (() => void) | undefined;
-
     invoke<SessionMeta[]>("list_sessions")
       .then(setSessions)
       .catch((err) => console.error("Failed to load sessions", err));
 
-    listen<SessionMeta[]>("sessions_updated", (event) => setSessions(event.payload)).then(
-      (fn) => (unlistenSessions = fn),
+    // Keep the listen() promises themselves rather than a `let fn` captured by a
+    // later .then(); under StrictMode's dev-only mount->cleanup->remount, cleanup
+    // can run before the promise resolves, which would otherwise leak a listener.
+    const sessionsUpdated = listen<SessionMeta[]>("sessions_updated", (event) =>
+      setSessions(event.payload),
+    );
+    const statusChanged = listen<StatusChange>("session_status_changed", (event) =>
+      setStatus(event.payload.sessionId, event.payload.status),
     );
 
-    listen<StatusChange>("session_status_changed", (event) =>
-      setStatus(event.payload.sessionId, event.payload.status),
-    ).then((fn) => (unlistenStatus = fn));
-
     return () => {
-      unlistenSessions?.();
-      unlistenStatus?.();
+      sessionsUpdated.then((unlisten) => unlisten());
+      statusChanged.then((unlisten) => unlisten());
     };
   }, [setSessions, setStatus]);
 
