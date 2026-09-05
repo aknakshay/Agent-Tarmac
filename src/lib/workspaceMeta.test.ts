@@ -28,7 +28,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const { updateWorkspace } = await import("./workspaceMeta");
 
 beforeEach(async () => {
-  stored = { live_session_ids: [], favorites: [], session_meta: {} };
+  stored = { live_session_ids: [], favorites: [], session_meta: {}, project_meta: {} };
   const invokeMock = (await import("@tauri-apps/api/core")).invoke as ReturnType<typeof vi.fn>;
   invokeMock.mockClear();
 });
@@ -72,5 +72,34 @@ describe("updateWorkspace", () => {
     await updateWorkspace((ws) => ws);
     const invokeMock = (await import("@tauri-apps/api/core")).invoke as ReturnType<typeof vi.fn>;
     expect(invokeMock).not.toHaveBeenCalledWith("set_workspace", expect.anything());
+  });
+
+  it("project_meta defaults to {} when missing from an older workspace.json payload", async () => {
+    // Simulate a workspace.json written before project_meta existed: the
+    // hydrated object should default it to {}.
+    (stored as unknown as Record<string, unknown>).project_meta = undefined;
+    const result = await updateWorkspace((ws) => ws);
+    expect(result.project_meta).toEqual({});
+  });
+
+  it("serializes overlapping project_meta writes without clobbering", async () => {
+    await Promise.all([
+      updateWorkspace((ws) => ({
+        ...ws,
+        project_meta: {
+          ...ws.project_meta,
+          "/p1": { custom_name: "Project One" },
+        },
+      })),
+      updateWorkspace((ws) => ({
+        ...ws,
+        project_meta: {
+          ...ws.project_meta,
+          "/p2": { custom_name: "Project Two" },
+        },
+      })),
+    ]);
+    expect(stored.project_meta).toHaveProperty("/p1");
+    expect(stored.project_meta).toHaveProperty("/p2");
   });
 });

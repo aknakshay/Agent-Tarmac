@@ -23,6 +23,15 @@ pub struct SessionMetaEntry {
     pub custom_title: Option<String>,
 }
 
+/// Per-project metadata layer: custom display name. Keyed by cwd (absolute
+/// path) in `Workspace::project_meta`. All fields default for back-compat —
+/// mirrors the same `#[serde(default)]` pattern used for `SessionMetaEntry`.
+#[derive(Default, Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct ProjectMetaEntry {
+    #[serde(default)]
+    pub custom_name: Option<String>,
+}
+
 #[derive(Default, Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Workspace {
     pub live_session_ids: Vec<String>,
@@ -33,6 +42,10 @@ pub struct Workspace {
     /// `load` treats any parse error as "start fresh").
     #[serde(default)]
     pub session_meta: HashMap<String, SessionMetaEntry>,
+    /// `#[serde(default)]` so a workspace.json written before this field
+    /// existed still loads cleanly — same back-compat pattern as `session_meta`.
+    #[serde(default)]
+    pub project_meta: HashMap<String, ProjectMetaEntry>,
 }
 
 pub fn load(path: &Path) -> Workspace {
@@ -194,6 +207,27 @@ mod tests {
     }
 
     #[test]
+    fn old_format_without_project_meta_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ws.json");
+        // workspace.json written before project_meta existed: must load without
+        // losing live_session_ids/favorites and must default project_meta to
+        // empty — mirrors the session_meta back-compat test above.
+        std::fs::write(
+            &p,
+            r#"{"live_session_ids":["a"],"favorites":["b"],"session_meta":{}}"#,
+        )
+        .unwrap();
+        let ws = load(&p);
+        assert_eq!(ws.live_session_ids, vec!["a".to_string()]);
+        assert_eq!(ws.favorites, vec!["b".to_string()]);
+        assert!(
+            ws.project_meta.is_empty(),
+            "project_meta should default to empty"
+        );
+    }
+
+    #[test]
     fn session_meta_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("ws.json");
@@ -209,5 +243,34 @@ mod tests {
         );
         save(&p, &ws).unwrap();
         assert_eq!(load(&p), ws);
+    }
+
+    #[test]
+    fn project_meta_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ws.json");
+        let mut ws = Workspace::default();
+        ws.project_meta.insert(
+            "/Users/me/proj".to_string(),
+            ProjectMetaEntry {
+                custom_name: Some("My Project".to_string()),
+            },
+        );
+        save(&p, &ws).unwrap();
+        let loaded = load(&p);
+        assert_eq!(
+            loaded.project_meta["/Users/me/proj"].custom_name.as_deref(),
+            Some("My Project")
+        );
+    }
+
+    #[test]
+    fn project_meta_entry_custom_name_cleared_by_empty_string() {
+        // The client sends "" to clear; the Rust store just stores whatever
+        // the frontend passes in — this test documents that None != Some("").
+        let mut ws = Workspace::default();
+        ws.project_meta
+            .insert("/p".to_string(), ProjectMetaEntry { custom_name: None });
+        assert_eq!(ws.project_meta["/p"].custom_name, None);
     }
 }

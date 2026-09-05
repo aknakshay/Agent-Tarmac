@@ -8,11 +8,17 @@ export interface WireSessionMetaEntry {
   custom_title: string | null;
 }
 
+/** Wire shape of the Rust `ProjectMetaEntry` struct (snake_case). */
+export interface WireProjectMetaEntry {
+  custom_name: string | null;
+}
+
 /** Wire shape of the Rust `Workspace` struct (snake_case). */
 export interface Workspace {
   live_session_ids: string[];
   favorites: string[];
   session_meta: Record<string, WireSessionMetaEntry>;
+  project_meta: Record<string, WireProjectMetaEntry>;
 }
 
 /**
@@ -37,9 +43,9 @@ let queue: Promise<void> = Promise.resolve();
  * applies `mutate`, and persists the result. Queued (see `queue` above) so
  * concurrent callers never clobber each other.
  *
- * `session_meta` defaults to `{}` for a workspace fetched before this field
- * existed on disk (older `workspace.json`), so callers don't need to guard
- * against `undefined`.
+ * `session_meta` and `project_meta` default to `{}` for a workspace fetched
+ * before these fields existed on disk (older `workspace.json`), so callers
+ * don't need to guard against `undefined`.
  *
  * If `mutate` returns the exact object it was given (by reference), that's
  * read as "nothing to change" and `set_workspace` is skipped — lets callers
@@ -49,7 +55,11 @@ let queue: Promise<void> = Promise.resolve();
 export function updateWorkspace(mutate: (ws: Workspace) => Workspace): Promise<Workspace> {
   const result = queue.then(async () => {
     const ws = await invoke<Workspace>("get_workspace");
-    const hydrated: Workspace = { ...ws, session_meta: ws.session_meta ?? {} };
+    const hydrated: Workspace = {
+      ...ws,
+      session_meta: ws.session_meta ?? {},
+      project_meta: ws.project_meta ?? {},
+    };
     const next = mutate(hydrated);
     if (next !== hydrated) {
       await invoke("set_workspace", { ws: next });

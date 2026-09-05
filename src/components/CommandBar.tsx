@@ -3,6 +3,7 @@ import { useDeck } from "../store";
 import type { Session } from "../types";
 import { basename } from "../lib/paths";
 import { displayTitle } from "../lib/session";
+import { displayProjectName } from "../lib/projectMeta";
 
 const STATUS_DOT_CLASS: Record<Session["status"], string> = {
   working: "bg-working animate-pulse",
@@ -20,10 +21,10 @@ interface CommandBarProps {
 }
 
 /** Ranks a session against a query: prefix match > word-boundary match > substring match. Higher is better. */
-function score(session: Session, query: string): number {
+function score(session: Session, query: string, projectName: string | null | undefined): number {
   const title = displayTitle(session).toLowerCase();
   const cwd = (session.cwd ?? "").toLowerCase();
-  const project = basename(session.cwd).toLowerCase();
+  const project = (projectName || basename(session.cwd)).toLowerCase();
 
   let best = -1;
   for (const field of [title, project, cwd]) {
@@ -41,6 +42,7 @@ function escapeRegExp(value: string): string {
 
 export function CommandBar({ onClose, onFocusSession, onNewSession }: CommandBarProps) {
   const sessions = useDeck((state) => state.sessions);
+  const projectNames = useDeck((state) => state.projectNames);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -59,12 +61,12 @@ export function CommandBar({ onClose, onFocusSession, onNewSession }: CommandBar
         .slice(0, MAX_RESULTS);
     }
     return all
-      .map((session) => ({ session, rank: score(session, q) }))
+      .map((session) => ({ session, rank: score(session, q, session.cwd ? projectNames[session.cwd] : null) }))
       .filter((entry) => entry.rank > 0)
       .sort((a, b) => b.rank - a.rank)
       .slice(0, MAX_RESULTS)
       .map((entry) => entry.session);
-  }, [sessions, query]);
+  }, [sessions, query, projectNames]);
 
   // Row count includes the pinned "New session…" action at the bottom.
   const rowCount = results.length + 1;
@@ -134,25 +136,29 @@ export function CommandBar({ onClose, onFocusSession, onNewSession }: CommandBar
             <p className="px-3 py-3 text-sm text-ink-faint">No sessions match "{query.trim()}".</p>
           )}
 
-          {results.map((session, index) => (
-            <button
-              key={session.id}
-              type="button"
-              data-index={index}
-              onMouseEnter={() => setSelected(index)}
-              onClick={() => commit(index)}
-              className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-100 ${
-                selected === index ? "bg-surface-hover" : ""
-              }`}
-            >
-              <span
-                className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[session.status]}`}
-                aria-hidden="true"
-              />
-              <span className="min-w-0 flex-1 truncate text-sm text-ink">{displayTitle(session)}</span>
-              <span className="shrink-0 truncate text-xs text-ink-faint">{basename(session.cwd)}</span>
-            </button>
-          ))}
+          {results.map((session, index) => {
+            const customName = session.cwd ? projectNames[session.cwd] : null;
+            const projectLabel = displayProjectName(session.cwd ?? null, customName);
+            return (
+              <button
+                key={session.id}
+                type="button"
+                data-index={index}
+                onMouseEnter={() => setSelected(index)}
+                onClick={() => commit(index)}
+                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-100 ${
+                  selected === index ? "bg-surface-hover" : ""
+                }`}
+              >
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[session.status]}`}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate text-sm text-ink">{displayTitle(session)}</span>
+                <span className="shrink-0 truncate text-xs text-ink-faint">{projectLabel}</span>
+              </button>
+            );
+          })}
 
           <button
             type="button"

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Session, SessionMeta, Status } from "./types";
 import { basename } from "./lib/paths";
 import { updateWorkspace, type WireSessionMetaEntry, type Workspace } from "./lib/workspaceMeta";
+import { scheduleProjectNamePersist } from "./lib/projectMeta";
 
 const PERSIST_DEBOUNCE_MS = 1000;
 const pendingMetaPersists = new Map<string, ReturnType<typeof setTimeout>>();
@@ -63,6 +64,11 @@ interface DeckState {
   metaCache: Record<string, WireSessionMetaEntry>;
   favoriteIdsCache: string[];
   /**
+   * Per-project custom names, keyed by cwd. Hydrated from `workspace.json`
+   * via `hydrateMeta` and updated live by `setProjectName`.
+   */
+  projectNames: Record<string, string | null>;
+  /**
    * Merges a fresh session list from the backend, preserving status/badge/
    * favorite for known ids. A session missing from `metas` is dropped unless
    * it's still "live" in this app — open in a pane, or a `start_new_session`
@@ -82,7 +88,7 @@ interface DeckState {
    * session, and stamps `lastSeenAt` on the session being switched away from.
    */
   focus(id: string, cwd?: string | null): void;
-  /** Merges persisted `session_meta`/`favorites` from `workspace.json` into known sessions. */
+  /** Merges persisted `session_meta`/`favorites`/`project_meta` from `workspace.json` into known sessions. */
   hydrateMeta(ws: Workspace): void;
   /** Sets the explicit unread flag. Persists (debounced). */
   setMarkedUnread(id: string, unread: boolean): void;
@@ -94,6 +100,8 @@ interface DeckState {
   toggleFavorite(id: string): void;
   addTag(id: string, tag: string): void;
   removeTag(id: string, tag: string): void;
+  /** Sets/clears a project display name. Empty string clears back to basename. Persists (debounced). */
+  setProjectName(cwd: string, name: string): void;
 }
 
 export const useDeck = create<DeckState>()((set, get) => ({
@@ -103,6 +111,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
   sessionsLoaded: false,
   metaCache: {},
   favoriteIdsCache: [],
+  projectNames: {},
 
   setSessions: (metas) => {
     const existing = get().sessions;
@@ -218,7 +227,14 @@ export const useDeck = create<DeckState>()((set, get) => ({
       for (const id of ws.favorites) {
         if (sessions[id]) sessions[id] = { ...sessions[id], favorite: true };
       }
-      return { sessions, metaCache: ws.session_meta, favoriteIdsCache: ws.favorites };
+
+      // Hydrate project custom names from project_meta.
+      const projectNames: Record<string, string | null> = { ...state.projectNames };
+      for (const [cwd, entry] of Object.entries(ws.project_meta ?? {})) {
+        projectNames[cwd] = entry.custom_name;
+      }
+
+      return { sessions, metaCache: ws.session_meta, favoriteIdsCache: ws.favorites, projectNames };
     });
   },
 
@@ -277,5 +293,13 @@ export const useDeck = create<DeckState>()((set, get) => ({
       return { sessions: { ...state.sessions, [id]: { ...session, tags: session.tags.filter((t) => t !== tag) } } };
     });
     scheduleMetaPersist(id, get);
+  },
+
+  setProjectName: (cwd, name) => {
+    const trimmed = name.trim();
+    set((state) => ({
+      projectNames: { ...state.projectNames, [cwd]: trimmed || null },
+    }));
+    scheduleProjectNamePersist(cwd, () => get().projectNames[cwd] ?? null);
   },
 }));

@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useDeck } from "./store";
 import { isSessionUnread, displayTitle } from "./lib/session";
+import { displayProjectName } from "./lib/projectMeta";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn((cmd: string) => {
     if (cmd === "get_workspace") {
-      return Promise.resolve({ live_session_ids: [], favorites: [], session_meta: {} });
+      return Promise.resolve({ live_session_ids: [], favorites: [], session_meta: {}, project_meta: {} });
     }
     return Promise.resolve(undefined);
   }),
@@ -25,7 +26,14 @@ const baseSession = {
 };
 
 beforeEach(() =>
-  useDeck.setState({ sessions: {}, openIds: [], activeId: null, metaCache: {}, favoriteIdsCache: [] }),
+  useDeck.setState({
+    sessions: {},
+    openIds: [],
+    activeId: null,
+    metaCache: {},
+    favoriteIdsCache: [],
+    projectNames: {},
+  }),
 );
 
 describe("useDeck", () => {
@@ -142,6 +150,7 @@ describe("useDeck", () => {
         session_meta: {
           a: { last_seen_at: "2026-09-05T09:00:00Z", marked_unread: true, tags: ["urgent"], custom_title: "Renamed" },
         },
+        project_meta: {},
       });
       const s = useDeck.getState().sessions["a"];
       expect(s.favorite).toBe(true);
@@ -188,6 +197,43 @@ describe("useDeck", () => {
       useDeck.setState({ sessions: { a: { id: "a", ...baseSession, tags: ["work", "urgent"] } } });
       useDeck.getState().removeTag("a", "work");
       expect(useDeck.getState().sessions["a"].tags).toEqual(["urgent"]);
+    });
+  });
+
+  describe("project rename", () => {
+    it("setProjectName stores a trimmed custom name", () => {
+      useDeck.getState().setProjectName("/Users/me/proj", "  My Project  ");
+      expect(useDeck.getState().projectNames["/Users/me/proj"]).toBe("My Project");
+    });
+
+    it("setProjectName with an empty string clears the name", () => {
+      useDeck.setState({ projectNames: { "/p": "Custom" } });
+      useDeck.getState().setProjectName("/p", "   ");
+      expect(useDeck.getState().projectNames["/p"]).toBeNull();
+    });
+
+    it("hydrateMeta seeds projectNames from project_meta", () => {
+      useDeck.getState().hydrateMeta({
+        live_session_ids: [],
+        favorites: [],
+        session_meta: {},
+        project_meta: {
+          "/Users/me/proj": { custom_name: "My Project" },
+        },
+      });
+      expect(useDeck.getState().projectNames["/Users/me/proj"]).toBe("My Project");
+    });
+
+    it("hydrateMeta with missing project_meta (old workspace.json) doesn't crash", () => {
+      // Simulate a hydration call where project_meta is absent (undefined from
+      // an older workspace.json). The store must default gracefully.
+      const ws = {
+        live_session_ids: [],
+        favorites: [],
+        session_meta: {},
+        project_meta: undefined as unknown as Record<string, { custom_name: string | null }>,
+      };
+      expect(() => useDeck.getState().hydrateMeta(ws)).not.toThrow();
     });
   });
 });
@@ -244,5 +290,27 @@ describe("displayTitle", () => {
 
   it("falls back to Untitled session when both are empty", () => {
     expect(displayTitle({ title: "", customTitle: null })).toBe("Untitled session");
+  });
+});
+
+describe("displayProjectName", () => {
+  it("returns the custom name when set", () => {
+    expect(displayProjectName("/Users/me/proj", "My Project")).toBe("My Project");
+  });
+
+  it("falls back to basename when custom name is null", () => {
+    expect(displayProjectName("/Users/me/proj", null)).toBe("proj");
+  });
+
+  it("falls back to basename when custom name is empty string", () => {
+    expect(displayProjectName("/Users/me/proj", "")).toBe("proj");
+  });
+
+  it("falls back to basename when custom name is whitespace-only", () => {
+    expect(displayProjectName("/Users/me/proj", "   ")).toBe("proj");
+  });
+
+  it("handles null cwd (no-project group) — falls back to basename's 'no project'", () => {
+    expect(displayProjectName(null, null)).toBe("no project");
   });
 });

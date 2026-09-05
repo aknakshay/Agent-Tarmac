@@ -4,7 +4,8 @@ import { useDeck } from "../store";
 import type { Session } from "../types";
 import { SessionRow } from "./SessionRow";
 import { SessionContextMenu } from "./SessionContextMenu";
-import { basename } from "../lib/paths";
+import { ProjectGroupContextMenu } from "./ProjectGroupContextMenu";
+import { displayProjectName } from "../lib/projectMeta";
 import { Logo, OnApproachIllustration, RunwayDivider } from "./icons/BrandMotifs";
 
 const DORMANT_VISIBLE_LIMIT = 15;
@@ -32,10 +33,14 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const activeId = useDeck((state) => state.activeId);
   const focus = useDeck((state) => state.focus);
   const setCustomTitle = useDeck((state) => state.setCustomTitle);
+  const setProjectName = useDeck((state) => state.setProjectName);
+  const projectNames = useDeck((state) => state.projectNames);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [showHistory, setShowHistory] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
+  const [projectContextMenu, setProjectContextMenu] = useState<{ cwd: string; label: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renamingProjectCwd, setRenamingProjectCwd] = useState<string | null>(null);
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   // "checking" until the one-shot `claude --version` probe resolves; only
   // relevant for the empty-state hint below, so it's only kicked off once
@@ -102,9 +107,10 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
 
     for (const [key, groupSessions] of byProject) {
       const sorted = [...groupSessions].sort(byLastActivityDesc);
+      const cwd = key === NO_PROJECT_KEY ? null : key;
       groups.push({
         key,
-        label: basename(key === NO_PROJECT_KEY ? null : key),
+        label: displayProjectName(cwd, projectNames[key]),
         sessions: sorted,
         mostRecent: new Date(sorted[0].lastActivity).getTime(),
       });
@@ -113,7 +119,7 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
     groups.sort((a, b) => b.mostRecent - a.mostRecent);
 
     return { groups, hiddenDormantCount };
-  }, [all, showHistory, activeTags]);
+  }, [all, showHistory, activeTags, projectNames]);
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups((prev) => {
@@ -204,21 +210,45 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
             // Divider after the Favorites group only — it's the one place two
             // "live" groupings sit back to back (see motifs.md a).
             const showDividerBefore = index > 0 && groups[index - 1].key === FAVORITES_KEY;
+            // Only real project groups (not Favorites, not no-project) are renameable.
+            const isProjectGroup =
+              group.key !== FAVORITES_KEY && group.key !== NO_PROJECT_KEY;
+            const isRenamingThisProject = renamingProjectCwd === group.key;
+
             return (
               <div key={group.key} className="mb-1">
                 {showDividerBefore && <RunwayDivider className="mb-2" />}
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(group.key)}
-                  aria-expanded={!isCollapsed}
-                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-semibold tracking-wide text-ink-faint uppercase hover:text-ink-muted"
-                >
-                  <ChevronIcon collapsed={isCollapsed} />
-                  <span className="truncate">{group.label}</span>
-                  <span className="ml-auto font-normal normal-case text-ink-faint">
-                    {group.sessions.length}
-                  </span>
-                </button>
+                {isRenamingThisProject ? (
+                  <ProjectGroupRenameInput
+                    currentLabel={group.label}
+                    onCommit={(name) => {
+                      setProjectName(group.key, name);
+                      setRenamingProjectCwd(null);
+                    }}
+                    onCancel={() => setRenamingProjectCwd(null)}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.key)}
+                    onContextMenu={
+                      isProjectGroup
+                        ? (e) => {
+                            e.preventDefault();
+                            setProjectContextMenu({ cwd: group.key, label: group.label, x: e.clientX, y: e.clientY });
+                          }
+                        : undefined
+                    }
+                    aria-expanded={!isCollapsed}
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-semibold tracking-wide text-ink-faint uppercase hover:text-ink-muted"
+                  >
+                    <ChevronIcon collapsed={isCollapsed} />
+                    <span className="truncate">{group.label}</span>
+                    <span className="ml-auto font-normal normal-case text-ink-faint">
+                      {group.sessions.length}
+                    </span>
+                  </button>
+                )}
                 {!isCollapsed && (
                   <div className="flex flex-col gap-0.5">
                     {group.sessions.map((session) => (
@@ -269,7 +299,49 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
           onRequestRename={() => setRenamingId(contextMenu.sessionId)}
         />
       )}
+
+      {projectContextMenu && (
+        <ProjectGroupContextMenu
+          cwd={projectContextMenu.cwd}
+          currentLabel={projectContextMenu.label}
+          x={projectContextMenu.x}
+          y={projectContextMenu.y}
+          onClose={() => setProjectContextMenu(null)}
+          onRequestRename={() => setRenamingProjectCwd(projectContextMenu.cwd)}
+        />
+      )}
     </aside>
+  );
+}
+
+/** Inline rename input shown in place of the group header button. */
+function ProjectGroupRenameInput({
+  currentLabel,
+  onCommit,
+  onCancel,
+}: {
+  currentLabel: string;
+  onCommit(name: string): void;
+  onCancel(): void;
+}) {
+  return (
+    <input
+      autoFocus
+      defaultValue={currentLabel}
+      onBlur={(e) => onCommit(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onCommit(e.currentTarget.value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      aria-label="Rename project"
+      data-app-editable
+      className="h-7 w-full rounded-md border border-accent/50 bg-app-bg px-2 text-xs font-semibold tracking-wide text-ink uppercase focus:outline-none"
+    />
   );
 }
 
