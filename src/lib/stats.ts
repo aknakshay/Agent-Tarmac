@@ -40,8 +40,18 @@ export interface FleetStats {
 
 const SPARKLINE_DAYS = 7;
 
-function dayKey(iso: string): string {
-  return iso.slice(0, 10);
+/**
+ * Buckets a timestamp by the user's LOCAL calendar day, not UTC. Slicing the
+ * ISO string would roll "today" over at UTC midnight — mid-afternoon for
+ * negative-offset timezones — so a Pacific user's active session would fall
+ * out of "Today" at 4-5pm. Local getters keep the boundary at local midnight.
+ */
+function dayKey(input: string | Date): string {
+  const d = input instanceof Date ? input : new Date(input);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 export function computeFleetStats(
@@ -50,7 +60,7 @@ export function computeFleetStats(
   now: Date = new Date(),
 ): FleetStats {
   const all = Object.values(sessions);
-  const today = dayKey(now.toISOString());
+  const today = dayKey(now);
 
   const rightNow: RightNowStats = { working: 0, needsYou: 0, idle: 0, live: 0 };
   for (const session of all) {
@@ -82,8 +92,8 @@ export function computeFleetStats(
   const sparkline: SparklineDay[] = [];
   for (let i = SPARKLINE_DAYS - 1; i >= 0; i -= 1) {
     const d = new Date(now);
-    d.setUTCDate(d.getUTCDate() - i);
-    const key = dayKey(d.toISOString());
+    d.setDate(d.getDate() - i);
+    const key = dayKey(d);
     sparkline.push({ date: key, count: sparklineCounts.get(key) ?? 0 });
   }
 

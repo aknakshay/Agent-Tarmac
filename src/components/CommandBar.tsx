@@ -125,7 +125,7 @@ export function CommandBar({ onClose, onFocusSession, onNewSession }: CommandBar
           <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-ink-faint">esc</kbd>
         </div>
 
-        <div ref={listRef} className="max-h-80 overflow-y-auto p-1.5">
+        <div ref={listRef} className="thin-scrollbar max-h-80 overflow-y-auto p-1.5">
           {results.length === 0 && query.trim() && (
             <p className="px-3 py-3 text-sm text-ink-faint">No sessions match "{query.trim()}".</p>
           )}
