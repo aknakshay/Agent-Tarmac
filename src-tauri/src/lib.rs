@@ -58,7 +58,8 @@ pub fn run() {
             pty_manager::stop_session,
             pty_manager::write_stdin,
             pty_manager::resize_pty,
-            pop_out::pop_out_to_ghostty
+            pop_out::pop_out_to_ghostty,
+            pop_out::bring_back_session,
         ])
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());

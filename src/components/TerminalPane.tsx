@@ -5,6 +5,7 @@ import { ensureOpened, getOrCreateTerminal, writeInfoLine } from "../terminals";
 import { basename } from "../lib/paths";
 import { displayTitle } from "../lib/session";
 import type { Session } from "../types";
+import { BringBackDialog } from "./BringBackDialog";
 
 interface PopOutResult {
   app: "ghostty" | "terminal";
@@ -99,6 +100,17 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
   const [poppingOut, setPoppingOut] = useState(false);
   const [popOutError, setPopOutError] = useState<string | null>(null);
 
+  // Tracks whether this session has been successfully popped out in this pane
+  // lifetime. The Rust ExternalSessions state is the authority; we mirror it
+  // locally to show/hide the "Bring back" vs "Open in Ghostty" buttons without
+  // adding a new IPC round-trip on every render.
+  const [isPoppedOut, setIsPoppedOut] = useState(false);
+
+  // ── Bring-back state ─────────────────────────────────────────────────────
+  const [showBringBackConfirm, setShowBringBackConfirm] = useState(false);
+  const [bringingBack, setBringingBack] = useState(false);
+  const [bringBackError, setBringBackError] = useState<string | null>(null);
+
   const handleStop = () => {
     setStopping(true);
     invoke("stop_session", { sessionId })
@@ -115,9 +127,25 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
           sessionId,
           `popped out to ${result.app === "ghostty" ? "Ghostty" : "Terminal"} — this pane is now read-only until resumed here`,
         );
+        setIsPoppedOut(true);
       })
       .catch((err) => setPopOutError(String(err)))
       .finally(() => setPoppingOut(false));
+  };
+
+  const handleBringBack = () => {
+    setBringingBack(true);
+    setBringBackError(null);
+    setShowBringBackConfirm(false);
+    invoke("bring_back_session", { sessionId })
+      .then(() => {
+        // Whether the external process was found+stopped or wasn't running
+        // (NotRunning outcome), we resume into Tarmac's PTY either way.
+        setIsPoppedOut(false);
+        return invoke("resume_session", { sessionId });
+      })
+      .catch((err) => setBringBackError(String(err)))
+      .finally(() => setBringingBack(false));
   };
 
   return (
@@ -162,7 +190,28 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
           ·
         </span>
         <span className="truncate text-xs text-ink-faint">{project}</span>
-        {cwd && (
+
+        {/* "Bring back to Tarmac" — shown only when this session is popped out */}
+        {isPoppedOut && !bringingBack && (
+          <button
+            type="button"
+            title="Bring this session back to Tarmac"
+            onClick={() => setShowBringBackConfirm(true)}
+            className="ml-auto flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-ink-muted transition-colors duration-100 hover:border-accent/50 hover:text-accent"
+          >
+            <BringBackIcon />
+            Bring back
+          </button>
+        )}
+        {isPoppedOut && bringingBack && (
+          <span className="ml-auto flex h-6 shrink-0 items-center gap-1.5 px-2 text-xs text-ink-faint">
+            <span className="h-3 w-3 animate-spin rounded-full border-2 border-ink-faint border-t-transparent" />
+            Bringing back…
+          </span>
+        )}
+
+        {/* "Open in Ghostty" — shown when not already popped out */}
+        {cwd && !isPoppedOut && (
           <button
             type="button"
             title="Open in Ghostty"
@@ -176,7 +225,7 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
             Open in Ghostty
           </button>
         )}
-        {status !== "dormant" && (
+        {status !== "dormant" && !isPoppedOut && (
           <button
             type="button"
             onClick={handleStop}
@@ -206,7 +255,23 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
             Couldn't pop out to Ghostty: {popOutError}
           </div>
         )}
+        {bringBackError && (
+          <div
+            role="alert"
+            className="absolute inset-x-2 top-2 rounded-md border border-needs-you/40 bg-surface px-3 py-2 text-xs text-needs-you"
+          >
+            Couldn't bring back session: {bringBackError}
+          </div>
+        )}
       </div>
+
+      {showBringBackConfirm && (
+        <BringBackDialog
+          sessionTitle={title}
+          onConfirm={handleBringBack}
+          onCancel={() => setShowBringBackConfirm(false)}
+        />
+      )}
     </div>
   );
 }
@@ -233,6 +298,21 @@ function PopOutIcon() {
     >
       <path d="M6 3H3.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V10" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M9 3h4v4M13 3 7 9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function BringBackIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3 w-3 shrink-0 fill-none stroke-current"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      {/* Arrow pointing back into the app */}
+      <path d="M10 3H12.5a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V10" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7 13l-4-4 4-4M3 9h6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

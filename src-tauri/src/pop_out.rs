@@ -38,6 +38,21 @@ impl ExternalSessions {
         let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
         guard.contains(session_id)
     }
+
+    /// Defense-in-depth guard for `bring_back_session`: only a session this
+    /// app itself popped out (tracked here) may be SIGTERM'd back. Without
+    /// this, the command would pgrep+kill by argv substring on the frontend's
+    /// say-so alone — the same trust-nothing posture `pop_out_to_ghostty`
+    /// takes with its `manager.is_running` check.
+    pub fn ensure_tracked(&self, session_id: &str) -> Result<(), String> {
+        if self.contains(session_id) {
+            Ok(())
+        } else {
+            Err(format!(
+                "session {session_id} is not tracked as external — nothing to bring back"
+            ))
+        }
+    }
 }
 
 /// Which app ended up hosting the popped-out session.
@@ -234,6 +249,44 @@ fn write_script(dir: &Path, session_id: &str, contents: &str) -> Result<PathBuf,
     Ok(path)
 }
 
+/// Parses `pgrep` stdout (one pid per line) into a `Vec<u32>`. Lines that
+/// don't parse as u32 are silently skipped (e.g. a trailing newline). Returns
+/// an empty vec when no processes match.
+pub fn parse_pids(output: &str) -> Vec<u32> {
+    output
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect()
+}
+
+/// Runs `pgrep -f "claude --resume <session_id>"` and returns the matching
+/// pids. An empty list means the session is not currently running externally.
+fn find_external_pids(session_id: &str) -> Vec<u32> {
+    let pattern = format!("claude --resume {session_id}");
+    let output = std::process::Command::new("pgrep")
+        .arg("-f")
+        .arg(&pattern)
+        .output();
+    match output {
+        Ok(out) => parse_pids(&String::from_utf8_lossy(&out.stdout)),
+        Err(_) => vec![],
+    }
+}
+
+/// Sends SIGTERM to a single pid. Returns an error string if `kill(2)` fails.
+#[cfg(unix)]
+fn sigterm_pid(pid: u32) -> Result<(), String> {
+    let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if ret == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "kill({pid}, SIGTERM) failed: {}",
+            std::io::Error::last_os_error()
+        ))
+    }
+}
+
 #[tauri::command]
 pub fn pop_out_to_ghostty(
     app: AppHandle,
@@ -288,6 +341,83 @@ pub fn pop_out_to_ghostty(
     external.insert(&session_id);
 
     Ok(PopOutResult { app: app_used })
+}
+
+/// Outcome of `bring_back_session`: the session either had an active external
+/// process (which was SIGTERM'd and waited out) or was already gone (the
+/// frontend can just call `resume_session` directly).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BringBackOutcome {
+    /// External claude process was found, SIGTERM'd, and confirmed stopped.
+    Stopped,
+    /// No external claude process was found; session can be resumed immediately.
+    NotRunning,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BringBackResult {
+    pub outcome: BringBackOutcome,
+}
+
+/// Brings a popped-out session back into agent-tarmac:
+/// 1. Validates the session id, and refuses ids not tracked in
+///    `ExternalSessions` (only sessions this app popped out may be killed).
+/// 2. Finds any external `claude --resume <id>` processes via `pgrep -f`.
+/// 3. SIGTERMs each found pid (plain SIGTERM to the pid; NOT killpg).
+/// 4. Polls until `pgrep` finds no more matching pids (reusing `poll_until_stopped`).
+/// 5. Removes the id from `ExternalSessions` so the frontend can resume normally.
+///
+/// Returns `Ok(BringBackResult { outcome: NotRunning })` when no external
+/// process was found — the frontend should still call `resume_session`.
+///
+/// Returns `Err` on timeout ("external session didn't exit — close it in
+/// Ghostty first") or if SIGTERM itself fails.
+#[tauri::command]
+pub fn bring_back_session(
+    external: State<ExternalSessions>,
+    session_id: String,
+) -> Result<BringBackResult, String> {
+    validate_session_id(&session_id)?;
+    external.ensure_tracked(&session_id)?;
+
+    let pids = find_external_pids(&session_id);
+
+    if pids.is_empty() {
+        external.remove(&session_id);
+        return Ok(BringBackResult {
+            outcome: BringBackOutcome::NotRunning,
+        });
+    }
+
+    // SIGTERM each matching pid.
+    #[cfg(unix)]
+    for pid in &pids {
+        // A pid that has already exited between pgrep and now is fine to
+        // ignore: ESRCH (no such process) just means it's already gone.
+        if let Err(e) = sigterm_pid(*pid) {
+            // Only hard-fail on unexpected errors, not "already gone".
+            if !e.contains("No such process") {
+                return Err(e);
+            }
+        }
+    }
+
+    // Poll until pgrep finds no more matches.
+    poll_until_stopped(
+        || !find_external_pids(&session_id).is_empty(),
+        STOP_POLL_INTERVAL,
+        STOP_POLL_TIMEOUT,
+        std::thread::sleep,
+    )
+    .map_err(|_| "external session didn't exit — close it in Ghostty first".to_string())?;
+
+    external.remove(&session_id);
+
+    Ok(BringBackResult {
+        outcome: BringBackOutcome::Stopped,
+    })
 }
 
 #[cfg(test)]
@@ -444,6 +574,23 @@ mod tests {
     }
 
     #[test]
+    fn ensure_tracked_rejects_untracked_and_accepts_tracked() {
+        // The bring_back_session guard: an id never popped out must be
+        // refused before any pgrep/SIGTERM happens; a tracked one passes,
+        // and passes no longer once removed.
+        let ext = ExternalSessions::default();
+        let err = ext.ensure_tracked("s1").unwrap_err();
+        assert!(
+            err.contains("not tracked as external"),
+            "unexpected error message: {err}"
+        );
+        ext.insert("s1");
+        assert_eq!(ext.ensure_tracked("s1"), Ok(()));
+        ext.remove("s1");
+        assert!(ext.ensure_tracked("s1").is_err());
+    }
+
+    #[test]
     fn poll_until_stopped_returns_ok_once_is_running_goes_false() {
         // No real sleeping: the injected `sleep` just counts calls, so this
         // test is instant regardless of interval/timeout values.
@@ -517,5 +664,85 @@ mod tests {
         );
         assert_eq!(result, Ok(()));
         assert!(!mgr.is_running("pop-out-test"));
+    }
+
+    // ── bring_back_session pure-logic tests ──────────────────────────────────
+
+    #[test]
+    fn parse_pids_parses_one_per_line() {
+        let output = "1234\n5678\n";
+        assert_eq!(parse_pids(output), vec![1234u32, 5678u32]);
+    }
+
+    #[test]
+    fn parse_pids_skips_blank_lines() {
+        let output = "42\n\n99\n";
+        assert_eq!(parse_pids(output), vec![42u32, 99u32]);
+    }
+
+    #[test]
+    fn parse_pids_returns_empty_for_empty_output() {
+        assert_eq!(parse_pids(""), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn parse_pids_skips_non_numeric_lines() {
+        // pgrep -f can occasionally return a header on some platforms.
+        let output = "PID\n1234\n";
+        assert_eq!(parse_pids(output), vec![1234u32]);
+    }
+
+    /// When no external process exists (empty pids), bring_back logic via
+    /// injected poll: should immediately return NotRunning.
+    #[test]
+    fn bring_back_logic_not_running_when_no_pids() {
+        // Simulate: pgrep finds nothing → poll sees "not running" immediately.
+        let mut poll_calls = 0u32;
+        let result = poll_until_stopped(
+            || {
+                poll_calls += 1;
+                false // already stopped
+            },
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(6),
+            |_| {},
+        );
+        assert_eq!(result, Ok(()));
+        // The first check returned false immediately → 0 sleeps, 1 poll call.
+        assert_eq!(poll_calls, 1);
+    }
+
+    /// When an external process is running, poll_until_stopped eventually
+    /// drains it — using the same injected pattern as the existing tests.
+    #[test]
+    fn bring_back_logic_waits_for_pids_to_drain() {
+        let mut remaining = 2u32;
+        let sleeps = std::cell::RefCell::new(0u32);
+        let result = poll_until_stopped(
+            || {
+                if remaining > 0 {
+                    remaining -= 1;
+                    true
+                } else {
+                    false
+                }
+            },
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(6),
+            |_| *sleeps.borrow_mut() += 1,
+        );
+        assert_eq!(result, Ok(()));
+        assert_eq!(*sleeps.borrow(), 2);
+    }
+
+    #[test]
+    fn bring_back_logic_times_out_when_pids_never_drain() {
+        let result = poll_until_stopped(
+            || true, // never clears
+            std::time::Duration::from_millis(1),
+            std::time::Duration::from_millis(5),
+            |_| {},
+        );
+        assert!(result.is_err());
     }
 }
