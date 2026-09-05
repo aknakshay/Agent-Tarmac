@@ -80,6 +80,25 @@ fn applescript_string_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Session ids are either UUIDs (resumed sessions) or `new-<uuid>`
+/// placeholders (freshly started ones) — both are `[A-Za-z0-9_-]` only.
+/// Rejecting anything else closes the injection path in the Terminal.app
+/// fallback: `osascript ... do script "<script_path>"` is evaluated by
+/// Terminal as a *shell command*, not just an AppleScript string, so a
+/// script path built from an id containing backticks or `$(...)` would
+/// otherwise execute arbitrary shell even after AppleScript-string-escaping.
+fn validate_session_id(session_id: &str) -> Result<(), String> {
+    let valid = !session_id.is_empty()
+        && session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("invalid session id: {session_id}"))
+    }
+}
+
 /// A single external-process invocation, captured rather than executed, so
 /// the launch logic can be unit-tested without actually spawning Ghostty or
 /// Terminal.app.
@@ -112,7 +131,15 @@ fn ghostty_invocation(script_path: &str) -> Invocation {
 }
 
 fn terminal_invocation(script_path: &str) -> Invocation {
-    let escaped = applescript_string_escape(script_path);
+    // `do script "<string>"` is evaluated TWICE: AppleScript parses the
+    // double-quoted string literal, then Terminal hands the resulting text
+    // to a shell to run. So the path needs two layers of escaping: first
+    // POSIX single-quoting for the shell layer, then AppleScript-string
+    // escaping of that (already-quoted) text for the literal layer. Quoting
+    // for the shell here is defense in depth on top of validate_session_id
+    // rejecting anything but `[A-Za-z0-9_-]` ids upstream.
+    let shell_quoted = format!("'{}'", shell_single_quote_escape(script_path));
+    let escaped = applescript_string_escape(&shell_quoted);
     Invocation::new(
         "osascript",
         vec![
@@ -160,6 +187,33 @@ fn launch_via(
     launch(&terminal).map(|()| PopOutApp::Terminal)
 }
 
+/// Outlasts PtyManager::kill's 5s SIGKILL escalation, so a stubborn process
+/// always gets a chance to actually die before we give up.
+const STOP_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+const STOP_POLL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// Bounded-polls `is_running` until it reports false, sleeping `interval`
+/// between checks, up to `timeout` total. Two processes must never share a
+/// session, so callers must not launch the external terminal until this
+/// returns `Ok`.
+fn poll_until_stopped(
+    mut is_running: impl FnMut() -> bool,
+    interval: std::time::Duration,
+    timeout: std::time::Duration,
+    sleep: impl Fn(std::time::Duration),
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if !is_running() {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("session did not exit in time".to_string());
+        }
+        sleep(interval);
+    }
+}
+
 fn write_script(dir: &Path, session_id: &str, contents: &str) -> Result<PathBuf, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{session_id}.sh"));
@@ -189,6 +243,8 @@ pub fn pop_out_to_ghostty(
     external: State<ExternalSessions>,
     session_id: String,
 ) -> Result<PopOutResult, String> {
+    validate_session_id(&session_id)?;
+
     let cwd = {
         let sessions = session_index.0.lock().unwrap_or_else(|e| e.into_inner());
         let meta = sessions
@@ -203,8 +259,18 @@ pub fn pop_out_to_ghostty(
     // A session can never be driven by two processes at once: stop
     // claude-deck's own PTY (if any) before handing off to the external
     // terminal. Mirrors `stop_session` exactly rather than duplicating it.
+    // kill() only sends SIGTERM and returns immediately, so we must poll
+    // until the process has actually exited before launching a second
+    // `claude --resume` on the same session — otherwise both processes race
+    // to own the same transcript.
     if manager.is_running(&session_id) {
         manager.kill(&session_id)?;
+        poll_until_stopped(
+            || manager.is_running(&session_id),
+            STOP_POLL_INTERVAL,
+            STOP_POLL_TIMEOUT,
+            std::thread::sleep,
+        )?;
         workspace_store::remove_live_session(&app, &workspace, &session_id)?;
     }
 
@@ -276,8 +342,42 @@ mod tests {
         assert_eq!(inv.program, "osascript");
         assert!(inv.args.contains(&"-e".to_string()));
         let joined = inv.args.join(" ");
-        assert!(joined.contains("do script \"/tmp/pop_out/abc.sh\""));
+        // The path must be shell-single-quoted INSIDE the AppleScript
+        // string, since Terminal hands the do-script text to a shell.
+        assert!(joined.contains("do script \"'/tmp/pop_out/abc.sh'\""));
         assert!(joined.contains("tell application \"Terminal\" to activate"));
+    }
+
+    #[test]
+    fn terminal_invocation_stays_inert_for_a_path_with_spaces_and_quotes() {
+        // A defense-in-depth check: even if validate_session_id ever let a
+        // hostile character through, the generated do-script text should
+        // still treat the whole path as one inert shell argument at BOTH
+        // the AppleScript-string layer and the shell layer Terminal applies
+        // on top of it.
+        let hostile = "/tmp/pop_out/x`touch /tmp/pwned`'.sh";
+        let inv = terminal_invocation(hostile);
+        let joined = inv.args.join(" ");
+        // Shell layer: the whole path sits inside a single-quoted argument
+        // (with the embedded `'` escaped via '"'"'), so a shell evaluating
+        // the do-script text would treat it as literal text, not run it as
+        // a command substitution.
+        assert!(joined.contains("do script \"'/tmp/pop_out/x`touch /tmp/pwned`'\\\"'\\\"'.sh'\""));
+    }
+
+    #[test]
+    fn validate_session_id_accepts_uuids_and_new_placeholders() {
+        assert!(validate_session_id("f47ac10b-58cc-4372-a567-0e02b2c3d479").is_ok());
+        assert!(validate_session_id("new-f47ac10b-58cc-4372-a567-0e02b2c3d479").is_ok());
+        assert!(validate_session_id("abc_123").is_ok());
+    }
+
+    #[test]
+    fn validate_session_id_rejects_shell_metacharacters() {
+        assert!(validate_session_id("x`touch /tmp/pwned`").is_err());
+        assert!(validate_session_id("x$(touch /tmp/pwned)").is_err());
+        assert!(validate_session_id("has space").is_err());
+        assert!(validate_session_id("").is_err());
     }
 
     #[test]
@@ -341,5 +441,81 @@ mod tests {
         assert!(ext.contains("s1"));
         ext.remove("s1");
         assert!(!ext.contains("s1"));
+    }
+
+    #[test]
+    fn poll_until_stopped_returns_ok_once_is_running_goes_false() {
+        // No real sleeping: the injected `sleep` just counts calls, so this
+        // test is instant regardless of interval/timeout values.
+        let mut remaining_true = 3;
+        let sleeps = std::cell::RefCell::new(0);
+        let result = poll_until_stopped(
+            || {
+                if remaining_true > 0 {
+                    remaining_true -= 1;
+                    true
+                } else {
+                    false
+                }
+            },
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_secs(6),
+            |_| *sleeps.borrow_mut() += 1,
+        );
+        assert_eq!(result, Ok(()));
+        assert_eq!(*sleeps.borrow(), 3);
+    }
+
+    #[test]
+    fn poll_until_stopped_errors_if_still_running_past_timeout() {
+        let mut calls = 0u32;
+        let result = poll_until_stopped(
+            || {
+                calls += 1;
+                true // never stops
+            },
+            std::time::Duration::from_millis(1),
+            std::time::Duration::from_millis(5),
+            |_| {}, // fake sleep: don't actually wait
+        );
+        assert!(result.is_err());
+        assert!(calls > 0);
+    }
+
+    /// End-to-end with the real `fake-claude.sh` fixture (same one
+    /// pty_integration.rs uses): kill a running session, then confirm
+    /// poll_until_stopped observes PtyManager's own is_running draining to
+    /// false within the polling window, using REAL sleeps at short
+    /// intervals so the test stays fast.
+    #[test]
+    fn poll_until_stopped_drains_a_real_killed_session() {
+        use crate::pty_manager::{PtyManager, SpawnSpec};
+
+        let mgr = PtyManager::default();
+        let script =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/fake-claude.sh");
+        mgr.spawn(
+            |_| {},
+            SpawnSpec {
+                session_id: "pop-out-test".into(),
+                cwd: std::env::temp_dir(),
+                program: script.to_string_lossy().into(),
+                args: vec!["--resume".into(), "pop-out-test".into()],
+            },
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        assert!(mgr.is_running("pop-out-test"));
+
+        mgr.kill("pop-out-test").unwrap();
+
+        let result = poll_until_stopped(
+            || mgr.is_running("pop-out-test"),
+            std::time::Duration::from_millis(50),
+            std::time::Duration::from_secs(6),
+            std::thread::sleep,
+        );
+        assert_eq!(result, Ok(()));
+        assert!(!mgr.is_running("pop-out-test"));
     }
 }
