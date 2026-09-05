@@ -3,13 +3,7 @@ import type { Session } from "../types";
 import { relativeTime } from "../lib/relativeTime";
 import { basename } from "../lib/paths";
 import { displayTitle, isSessionUnread } from "../lib/session";
-
-const STATUS_DOT_CLASS: Record<Session["status"], string> = {
-  working: "bg-working animate-pulse",
-  needsYou: "bg-needs-you",
-  idle: "bg-ink-faint",
-  dormant: "border border-ink-faint bg-transparent",
-};
+import { JetIcon } from "./JetIcon";
 
 interface SessionRowProps {
   session: Session;
@@ -53,7 +47,7 @@ export function SessionRow({
       }`}
     >
       <span className="relative shrink-0">
-        <span className={`block h-2 w-2 rounded-full ${STATUS_DOT_CLASS[session.status]}`} aria-hidden="true" />
+        <JetIcon status={session.status} className="h-3 w-3" />
         {unread && (
           <span
             className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-accent ring-2 ring-surface"

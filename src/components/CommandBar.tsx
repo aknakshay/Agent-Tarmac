@@ -4,13 +4,7 @@ import type { Session } from "../types";
 import { basename } from "../lib/paths";
 import { displayTitle } from "../lib/session";
 import { displayProjectName } from "../lib/projectMeta";
-
-const STATUS_DOT_CLASS: Record<Session["status"], string> = {
-  working: "bg-working animate-pulse",
-  needsYou: "bg-needs-you",
-  idle: "bg-ink-faint",
-  dormant: "border border-ink-faint bg-transparent",
-};
+import { JetIcon } from "./JetIcon";
 
 const MAX_RESULTS = 12;
 
@@ -150,10 +144,7 @@ export function CommandBar({ onClose, onFocusSession, onNewSession }: CommandBar
                   selected === index ? "bg-surface-hover" : ""
                 }`}
               >
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[session.status]}`}
-                  aria-hidden="true"
-                />
+                <JetIcon status={session.status} className="h-3 w-3" />
                 <span className="min-w-0 flex-1 truncate text-sm text-ink">{displayTitle(session)}</span>
                 <span className="shrink-0 truncate text-xs text-ink-faint">{projectLabel}</span>
               </button>

@@ -4,19 +4,12 @@ import { useDeck } from "../store";
 import { ensureOpened, getOrCreateTerminal, writeInfoLine } from "../terminals";
 import { basename } from "../lib/paths";
 import { displayTitle } from "../lib/session";
-import type { Session } from "../types";
 import { BringBackDialog } from "./BringBackDialog";
+import { JetIcon } from "./JetIcon";
 
 interface PopOutResult {
   app: "ghostty" | "terminal";
 }
-
-const STATUS_DOT_CLASS: Record<Session["status"], string> = {
-  working: "bg-working animate-pulse",
-  needsYou: "bg-needs-you",
-  idle: "bg-ink-faint",
-  dormant: "border border-ink-faint bg-transparent",
-};
 
 const RESIZE_DEBOUNCE_MS = 100;
 
@@ -154,7 +147,7 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
       style={{ display: active ? "flex" : "none" }}
     >
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[status]}`} aria-hidden="true" />
+        <JetIcon status={status} external={isPoppedOut} className="h-3 w-3" />
         {renamingTitle ? (
           <input
             autoFocus

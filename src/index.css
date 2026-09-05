@@ -73,6 +73,20 @@ body {
   outline-offset: 2px;
 }
 
+/* Afterburner pulse on the "working" JetIcon glyph — transform/opacity only,
+   collapsed to a static glow by the reduced-motion override below. */
+@keyframes jet-afterburner {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scaleY(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1.15);
+  }
+}
+
 /* Respect the OS-level reduced-motion preference everywhere: status-dot
    pulses, spinners, and transitions all collapse to instant. */
 @media (prefers-reduced-motion: reduce) {
