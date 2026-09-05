@@ -3701,6 +3701,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
+ "libc",
  "notify",
  "portable-pty",
  "serde",
@@ -3709,6 +3710,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-opener",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]

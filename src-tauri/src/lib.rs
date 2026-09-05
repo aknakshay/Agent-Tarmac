@@ -1,7 +1,8 @@
-mod activity;
-mod session_index;
-mod transcript;
-mod workspace_store;
+pub mod activity;
+pub mod pty_manager;
+pub mod session_index;
+pub mod transcript;
+pub mod workspace_store;
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -22,11 +23,17 @@ pub fn run() {
         .manage(workspace_store::WorkspaceState(Mutex::new(
             workspace_store::Workspace::default(),
         )))
+        .manage(pty_manager::PtyManager::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             session_index::list_sessions,
             workspace_store::get_workspace,
-            workspace_store::set_workspace
+            workspace_store::set_workspace,
+            pty_manager::resume_session,
+            pty_manager::start_new_session,
+            pty_manager::stop_session,
+            pty_manager::write_stdin,
+            pty_manager::resize_pty
         ])
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());

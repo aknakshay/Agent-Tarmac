@@ -1,0 +1,350 @@
+use base64::Engine;
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use crate::session_index::SessionIndexState;
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
+
+const TAIL_CAPACITY: usize = 2048;
+
+/// Description of a session to spawn.
+pub struct SpawnSpec {
+    pub session_id: String,
+    pub cwd: PathBuf,
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// Events emitted by a running PTY session.
+#[derive(Debug, Clone)]
+pub enum PtyEvent {
+    Output {
+        session_id: String,
+        data_b64: String,
+    },
+    Exited {
+        session_id: String,
+    },
+}
+
+struct PtyHandle {
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+    child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
+    tail: Arc<Mutex<String>>,
+    last_output_at: Arc<Mutex<Option<Instant>>>,
+    running: Arc<Mutex<bool>>,
+}
+
+#[derive(Default)]
+pub struct PtyManager {
+    inner: Mutex<HashMap<String, PtyHandle>>,
+}
+
+fn push_tail(tail: &Arc<Mutex<String>>, chunk: &str) {
+    let mut t = tail.lock().unwrap_or_else(|e| e.into_inner());
+    t.push_str(chunk);
+    if t.len() > TAIL_CAPACITY {
+        let excess = t.len() - TAIL_CAPACITY;
+        // Trim at a char boundary at or after `excess`.
+        let mut cut = excess;
+        while cut < t.len() && !t.is_char_boundary(cut) {
+            cut += 1;
+        }
+        t.drain(..cut);
+    }
+}
+
+impl PtyManager {
+    pub fn spawn(
+        &self,
+        emitter: impl Fn(PtyEvent) + Send + 'static,
+        spec: SpawnSpec,
+    ) -> Result<(), String> {
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 30,
+                cols: 100,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())?;
+
+        let mut cmd = CommandBuilder::new(&spec.program);
+        cmd.args(&spec.args);
+        cmd.cwd(&spec.cwd);
+
+        let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+        // Drop the slave end in this process so EOF is detected correctly.
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+
+        let tail: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+        let last_output_at: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
+        let running = Arc::new(Mutex::new(true));
+        let child: Arc<Mutex<Box<dyn Child + Send + Sync>>> = Arc::new(Mutex::new(child));
+
+        let reader_tail = tail.clone();
+        let reader_last_output = last_output_at.clone();
+        let reader_running = running.clone();
+        let reader_session_id = spec.session_id.clone();
+
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let chunk_str = String::from_utf8_lossy(&buf[..n]).to_string();
+                        push_tail(&reader_tail, &chunk_str);
+                        *reader_last_output.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(Instant::now());
+                        let data_b64 = base64::engine::general_purpose::STANDARD.encode(&buf[..n]);
+                        emitter(PtyEvent::Output {
+                            session_id: reader_session_id.clone(),
+                            data_b64,
+                        });
+                    }
+                    Err(_) => break,
+                }
+            }
+            *reader_running.lock().unwrap_or_else(|e| e.into_inner()) = false;
+            emitter(PtyEvent::Exited {
+                session_id: reader_session_id.clone(),
+            });
+        });
+
+        let handle = PtyHandle {
+            master: pair.master,
+            writer,
+            child,
+            tail,
+            last_output_at,
+            running,
+        };
+
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(spec.session_id, handle);
+
+        Ok(())
+    }
+
+    pub fn write(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = guard
+            .get_mut(session_id)
+            .ok_or_else(|| format!("unknown session: {session_id}"))?;
+        handle.writer.write_all(data).map_err(|e| e.to_string())?;
+        handle.writer.flush().map_err(|e| e.to_string())
+    }
+
+    pub fn resize(&self, session_id: &str, rows: u16, cols: u16) -> Result<(), String> {
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = guard
+            .get(session_id)
+            .ok_or_else(|| format!("unknown session: {session_id}"))?;
+        handle
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn kill(&self, session_id: &str) -> Result<(), String> {
+        let child = {
+            let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let handle = guard
+                .get(session_id)
+                .ok_or_else(|| format!("unknown session: {session_id}"))?;
+            handle.child.clone()
+        };
+
+        let pid = {
+            let c = child.lock().unwrap_or_else(|e| e.into_inner());
+            c.process_id()
+        };
+
+        #[cfg(unix)]
+        if let Some(pid) = pid {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let mut c = child.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = c.kill();
+        }
+
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            let mut c = child.lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(c.try_wait(), Ok(None)) {
+                let _ = c.kill();
+            }
+        });
+
+        Ok(())
+    }
+
+    pub fn is_running(&self, session_id: &str) -> bool {
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.get(session_id) {
+            Some(handle) => {
+                let reader_says_running = *handle.running.lock().unwrap_or_else(|e| e.into_inner());
+                if !reader_says_running {
+                    return false;
+                }
+                let mut c = handle.child.lock().unwrap_or_else(|e| e.into_inner());
+                matches!(c.try_wait(), Ok(None))
+            }
+            None => false,
+        }
+    }
+
+    pub fn last_output_tail(&self, session_id: &str) -> String {
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.get(session_id) {
+            Some(handle) => handle
+                .tail
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            None => String::new(),
+        }
+    }
+
+    pub fn secs_since_output(&self, session_id: &str) -> Option<u64> {
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = guard.get(session_id)?;
+        let last = *handle
+            .last_output_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        last.map(|instant| instant.elapsed().as_secs())
+    }
+}
+
+pub fn claude_program() -> String {
+    std::env::var("CLAUDE_DECK_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string())
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PtyOutputPayload {
+    session_id: String,
+    data_b64: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PtyExitedPayload {
+    session_id: String,
+}
+
+fn make_emitter(app: AppHandle) -> impl Fn(PtyEvent) + Send + 'static {
+    move |event| match event {
+        PtyEvent::Output {
+            session_id,
+            data_b64,
+        } => {
+            let _ = app.emit(
+                "pty_output",
+                PtyOutputPayload {
+                    session_id,
+                    data_b64,
+                },
+            );
+        }
+        PtyEvent::Exited { session_id } => {
+            let _ = app.emit("pty_exited", PtyExitedPayload { session_id });
+        }
+    }
+}
+
+#[tauri::command]
+pub fn resume_session(
+    app: AppHandle,
+    manager: State<PtyManager>,
+    session_index: State<SessionIndexState>,
+    session_id: String,
+) -> Result<(), String> {
+    let cwd = {
+        let sessions = session_index.0.lock().unwrap_or_else(|e| e.into_inner());
+        let meta = sessions
+            .iter()
+            .find(|s| s.id == session_id)
+            .ok_or_else(|| format!("unknown session: {session_id}"))?;
+        meta.cwd
+            .clone()
+            .ok_or_else(|| format!("session {session_id} has no known cwd"))?
+    };
+
+    manager.spawn(
+        make_emitter(app),
+        SpawnSpec {
+            session_id: session_id.clone(),
+            cwd: PathBuf::from(cwd),
+            program: claude_program(),
+            args: vec!["--resume".into(), session_id],
+        },
+    )
+}
+
+#[tauri::command]
+pub fn start_new_session(
+    app: AppHandle,
+    manager: State<PtyManager>,
+    cwd: String,
+) -> Result<String, String> {
+    let session_id = format!("new-{}", uuid::Uuid::new_v4());
+    manager.spawn(
+        make_emitter(app),
+        SpawnSpec {
+            session_id: session_id.clone(),
+            cwd: PathBuf::from(cwd),
+            program: claude_program(),
+            args: vec![],
+        },
+    )?;
+    Ok(session_id)
+}
+
+#[tauri::command]
+pub fn stop_session(manager: State<PtyManager>, session_id: String) -> Result<(), String> {
+    manager.kill(&session_id)
+}
+
+#[tauri::command]
+pub fn write_stdin(
+    manager: State<PtyManager>,
+    session_id: String,
+    data_b64: String,
+) -> Result<(), String> {
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(data_b64)
+        .map_err(|e| e.to_string())?;
+    manager.write(&session_id, &data)
+}
+
+#[tauri::command]
+pub fn resize_pty(
+    manager: State<PtyManager>,
+    session_id: String,
+    rows: u16,
+    cols: u16,
+) -> Result<(), String> {
+    manager.resize(&session_id, rows, cols)
+}
