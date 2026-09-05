@@ -1,14 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useDeck } from "../store";
+import type { Workspace } from "../lib/workspaceMeta";
 
 const RESUME_GAP_MS = 250;
-
-interface Workspace {
-  live_session_ids: string[];
-  open_session_ids: string[];
-  favorites: string[];
-}
 
 async function fetchAndClearLiveIds(): Promise<void> {
   // Read-modify-write against the latest workspace rather than a value

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useDeck } from "../store";
 import type { Session } from "../types";
 import { SessionRow } from "./SessionRow";
+import { SessionContextMenu } from "./SessionContextMenu";
 import { basename } from "../lib/paths";
 
 const DORMANT_VISIBLE_LIMIT = 15;
@@ -28,14 +29,35 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const sessions = useDeck((state) => state.sessions);
   const activeId = useDeck((state) => state.activeId);
   const focus = useDeck((state) => state.focus);
+  const setCustomTitle = useDeck((state) => state.setCustomTitle);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [showHistory, setShowHistory] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
 
   const all = useMemo(() => Object.values(sessions), [sessions]);
 
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const session of all) for (const tag of session.tags) set.add(tag);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [all]);
+
+  const toggleTagFilter = (tag: string) => {
+    setActiveTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  };
+
   const { groups, hiddenDormantCount } = useMemo(() => {
-    const favorites = all.filter((s) => s.favorite);
-    const rest = all.filter((s) => !s.favorite);
+    const filtered =
+      activeTags.size === 0 ? all : all.filter((s) => s.tags.some((tag) => activeTags.has(tag)));
+    const favorites = filtered.filter((s) => s.favorite);
+    const rest = filtered.filter((s) => !s.favorite);
 
     const dormantSorted = rest.filter((s) => s.status === "dormant").sort(byLastActivityDesc);
     const visibleDormantIds = new Set(dormantSorted.slice(0, DORMANT_VISIBLE_LIMIT).map((s) => s.id));
@@ -78,7 +100,7 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
     groups.sort((a, b) => b.mostRecent - a.mostRecent);
 
     return { groups, hiddenDormantCount };
-  }, [all, showHistory]);
+  }, [all, showHistory, activeTags]);
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups((prev) => {
@@ -113,6 +135,38 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
         </button>
       </div>
 
+      {allTags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-2">
+          {allTags.map((tag) => {
+            const isActive = activeTags.has(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleTagFilter(tag)}
+                aria-pressed={isActive}
+                className={`rounded-full px-2 py-0.5 text-xs font-medium transition-colors duration-100 ${
+                  isActive ? "bg-accent text-app-bg" : "bg-surface-hover text-ink-muted hover:text-ink"
+                }`}
+              >
+                {tag}
+              </button>
+            );
+          })}
+          {activeTags.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTags(new Set())}
+              aria-label="Clear tag filters"
+              title="Clear tag filters"
+              className="rounded-full px-1.5 py-0.5 text-xs text-ink-faint hover:text-needs-you"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
+
       {all.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
           <p className="text-sm font-medium text-ink-muted">No sessions yet</p>
@@ -120,6 +174,9 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto px-2 py-2">
+          {groups.length === 0 && (
+            <p className="px-2 py-3 text-center text-xs text-ink-faint">No sessions match the selected tags.</p>
+          )}
           {groups.map((group) => {
             const isCollapsed = collapsedGroups.has(group.key);
             return (
@@ -144,6 +201,16 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
                         session={session}
                         active={session.id === activeId}
                         onSelect={() => focus(session.id)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY });
+                        }}
+                        renaming={renamingId === session.id}
+                        onRenameCommit={(title) => {
+                          setCustomTitle(session.id, title);
+                          setRenamingId(null);
+                        }}
+                        onRenameCancel={() => setRenamingId(null)}
                       />
                     ))}
                   </div>
@@ -164,6 +231,17 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
             {showHistory ? "Hide history" : `Show history (${hiddenDormantCount})`}
           </button>
         </div>
+      )}
+
+      {contextMenu && sessions[contextMenu.sessionId] && (
+        <SessionContextMenu
+          session={sessions[contextMenu.sessionId]}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          allTags={allTags}
+          onClose={() => setContextMenu(null)}
+          onRequestRename={() => setRenamingId(contextMenu.sessionId)}
+        />
       )}
     </aside>
   );

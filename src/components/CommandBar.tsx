@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useDeck } from "../store";
 import type { Session } from "../types";
 import { basename } from "../lib/paths";
+import { displayTitle } from "../lib/session";
 
 const STATUS_DOT_CLASS: Record<Session["status"], string> = {
   working: "bg-working animate-pulse",
@@ -20,7 +21,7 @@ interface CommandBarProps {
 
 /** Ranks a session against a query: prefix match > word-boundary match > substring match. Higher is better. */
 function score(session: Session, query: string): number {
-  const title = session.title.toLowerCase();
+  const title = displayTitle(session).toLowerCase();
   const cwd = (session.cwd ?? "").toLowerCase();
   const project = basename(session.cwd).toLowerCase();
 
@@ -147,9 +148,7 @@ export function CommandBar({ onClose, onFocusSession, onNewSession }: CommandBar
                 className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[session.status]}`}
                 aria-hidden="true"
               />
-              <span className="min-w-0 flex-1 truncate text-sm text-ink">
-                {session.title || "Untitled session"}
-              </span>
+              <span className="min-w-0 flex-1 truncate text-sm text-ink">{displayTitle(session)}</span>
               <span className="shrink-0 truncate text-xs text-ink-faint">{basename(session.cwd)}</span>
             </button>
           ))}

@@ -9,6 +9,7 @@ import { NewSessionDialog } from "./components/NewSessionDialog";
 import { RestoreBanner } from "./components/RestoreBanner";
 import { writeExited, writeOutput } from "./terminals";
 import type { SessionMeta, StatusChange } from "./types";
+import type { Workspace } from "./lib/workspaceMeta";
 
 interface PtyOutputPayload {
   sessionId: string;
@@ -26,6 +27,8 @@ function App() {
   const openIds = useDeck((state) => state.openIds);
   const activeId = useDeck((state) => state.activeId);
   const focus = useDeck((state) => state.focus);
+  const hydrateMeta = useDeck((state) => state.hydrateMeta);
+  const toggleMarkedUnread = useDeck((state) => state.toggleMarkedUnread);
 
   const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -55,6 +58,12 @@ function App() {
 
       if (inModalInput) return;
 
+      if (e.shiftKey && e.key.toLowerCase() === "u") {
+        e.preventDefault();
+        if (activeId) toggleMarkedUnread(activeId);
+        return;
+      }
+
       if (e.key.toLowerCase() === "n") {
         e.preventDefault();
         setNewSessionOpen(true);
@@ -74,11 +83,17 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [commandBarOpen, newSessionOpen, openIds, focus]);
+  }, [commandBarOpen, newSessionOpen, openIds, focus, activeId, toggleMarkedUnread]);
 
   useEffect(() => {
     invoke<SessionMeta[]>("list_sessions")
       .then(setSessions)
+      // Hydrate persisted read/unread, tags, and rename metadata once the
+      // session index has landed, so hydrateMeta has known sessions to
+      // merge into (a session_meta entry for an id nobody's scanned yet is
+      // simply skipped — see store.ts).
+      .then(() => invoke<Workspace>("get_workspace"))
+      .then(hydrateMeta)
       .catch((err) => console.error("Failed to load sessions", err));
 
     // Keep the listen() promises themselves rather than a `let fn` captured by a
@@ -105,7 +120,7 @@ function App() {
       ptyOutput.then((unlisten) => unlisten());
       ptyExited.then((unlisten) => unlisten());
     };
-  }, [setSessions, setStatus]);
+  }, [setSessions, setStatus, hydrateMeta]);
 
   return (
     <div className="flex h-dvh w-full bg-app-bg text-ink">

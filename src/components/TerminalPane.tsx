@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useDeck } from "../store";
 import { ensureOpened, getOrCreateTerminal, writeInfoLine } from "../terminals";
 import { basename } from "../lib/paths";
+import { displayTitle } from "../lib/session";
 import type { Session } from "../types";
 
 interface PopOutResult {
@@ -29,7 +30,9 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
   const [resumeError, setResumeError] = useState<string | null>(null);
 
   const session = useDeck((state) => state.sessions[sessionId]);
+  const setCustomTitle = useDeck((state) => state.setCustomTitle);
   const initialStatus = useRef(session?.status);
+  const [renamingTitle, setRenamingTitle] = useState(false);
 
   // Mount once: open the terminal into this pane's container, resuming a
   // dormant session's PTY first if it isn't already running.
@@ -82,7 +85,7 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
     };
   }, [sessionId, active]);
 
-  const title = session?.title || "Untitled session";
+  const title = session ? displayTitle(session) : "Untitled session";
   const project = basename(session?.cwd ?? null);
   const status = session?.status ?? "dormant";
   const cwd = session?.cwd ?? null;
@@ -118,7 +121,36 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
     >
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
         <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[status]}`} aria-hidden="true" />
-        <span className="truncate text-sm font-medium text-ink">{title}</span>
+        {renamingTitle ? (
+          <input
+            autoFocus
+            defaultValue={title}
+            onBlur={(e) => {
+              setCustomTitle(sessionId, e.target.value);
+              setRenamingTitle(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                setCustomTitle(sessionId, e.currentTarget.value);
+                setRenamingTitle(false);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setRenamingTitle(false);
+              }
+            }}
+            aria-label="Rename session"
+            className="h-6 min-w-0 flex-1 rounded-md border border-accent/50 bg-app-bg px-1.5 text-sm text-ink focus:outline-none"
+          />
+        ) : (
+          <span
+            className="cursor-text truncate text-sm font-medium text-ink"
+            title="Double-click to rename"
+            onDoubleClick={() => setRenamingTitle(true)}
+          >
+            {title}
+          </span>
+        )}
         <span className="text-xs text-ink-faint" aria-hidden="true">
           ·
         </span>

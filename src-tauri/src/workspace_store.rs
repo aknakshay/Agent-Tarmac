@@ -1,15 +1,39 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
 pub struct WorkspaceState(pub Mutex<Workspace>);
 
+/// Per-session metadata layer: read/unread, tags, rename. Keyed by session id
+/// in `Workspace::session_meta`. All fields default so a fresh entry (a
+/// session nothing has touched yet) round-trips as the zero value rather than
+/// requiring every caller to construct one explicitly.
+#[derive(Default, Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct SessionMetaEntry {
+    #[serde(default)]
+    pub last_seen_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub marked_unread: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub custom_title: Option<String>,
+}
+
 #[derive(Default, Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Workspace {
     pub live_session_ids: Vec<String>,
     pub open_session_ids: Vec<String>,
     pub favorites: Vec<String>,
+    /// `#[serde(default)]` so a workspace.json written before this field
+    /// existed still loads instead of falling back to `Workspace::default()`
+    /// (which would silently wipe live_session_ids/open_session_ids/favorites
+    /// too, since `load` treats any parse error as "start fresh").
+    #[serde(default)]
+    pub session_meta: HashMap<String, SessionMetaEntry>,
 }
 
 pub fn load(path: &Path) -> Workspace {
@@ -139,6 +163,7 @@ mod tests {
             live_session_ids: vec!["a".into()],
             open_session_ids: vec![],
             favorites: vec!["b".into()],
+            ..Default::default()
         };
         save(&p, &ws).unwrap();
         assert_eq!(load(&p), ws);
@@ -150,5 +175,39 @@ mod tests {
         let p = dir.path().join("ws.json");
         std::fs::write(&p, "{{{").unwrap();
         assert_eq!(load(&p), Workspace::default());
+    }
+
+    #[test]
+    fn old_format_without_session_meta_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ws.json");
+        std::fs::write(
+            &p,
+            r#"{"live_session_ids":["a"],"open_session_ids":["b"],"favorites":["c"]}"#,
+        )
+        .unwrap();
+        let ws = load(&p);
+        assert_eq!(ws.live_session_ids, vec!["a".to_string()]);
+        assert_eq!(ws.open_session_ids, vec!["b".to_string()]);
+        assert_eq!(ws.favorites, vec!["c".to_string()]);
+        assert!(ws.session_meta.is_empty());
+    }
+
+    #[test]
+    fn session_meta_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("ws.json");
+        let mut ws = Workspace::default();
+        ws.session_meta.insert(
+            "sess-1".to_string(),
+            SessionMetaEntry {
+                last_seen_at: Some(Utc::now()),
+                marked_unread: true,
+                tags: vec!["urgent".to_string()],
+                custom_title: Some("My rename".to_string()),
+            },
+        );
+        save(&p, &ws).unwrap();
+        assert_eq!(load(&p), ws);
     }
 }
