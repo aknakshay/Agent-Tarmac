@@ -9,7 +9,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 // confirmed at publish time
-const REPO: &str = "akshaynagpal/agent-tarmac";
+const REPO: &str = "aknakshay/agent-tarmac";
 
 const USER_AGENT: &str = "agent-tarmac-update-check";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
