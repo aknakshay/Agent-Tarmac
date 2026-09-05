@@ -237,8 +237,12 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
           </button>
         )}
       </header>
-      <div className="relative min-h-0 flex-1">
-        <div ref={containerRef} className="h-full w-full px-2 py-1" />
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        {/* Bottom padding is deliberately asymmetric (pb-2 vs pt-1): it keeps
+            the last terminal row clear of the pane edge without shifting the
+            header's tight spacing above. FitAddon measures this container,
+            so the padding is already accounted for on every refit. */}
+        <div ref={containerRef} className="h-full w-full px-2 pt-1 pb-2" />
         {resumeError && (
           <div
             role="alert"

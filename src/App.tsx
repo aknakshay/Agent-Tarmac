@@ -138,12 +138,12 @@ function App() {
   }, [setSessions, setStatus, hydrateMeta]);
 
   return (
-    <div className="flex h-dvh w-full bg-app-bg text-ink">
+    <div className="flex h-dvh w-full min-h-0 overflow-hidden bg-app-bg text-ink">
       <Sidebar
         onOpenCommandBar={() => setCommandBarOpen(true)}
         onOpenNewSession={() => setNewSessionOpen(true)}
       />
-      <main className="relative flex-1">
+      <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col">
           <UpdateBanner />
           <RestoreBanner />

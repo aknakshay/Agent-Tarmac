@@ -24,6 +24,12 @@ html,
 body,
 #root {
   height: 100%;
+  /* This is a single-viewport app shell, never a scrolling document: any
+     descendant that overflows the viewport must scroll internally (the
+     sidebar list, a terminal's own scrollback), not push the window into
+     showing its own scrollbar. A window-level scrollbar here is always a
+     bug, not a fallback. */
+  overflow: hidden;
 }
 
 body {
@@ -34,6 +40,26 @@ body {
     -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Thin, styled scrollbar for internal scroll regions (sidebar session list,
+   command bar results) — WebKit only, which is what the Tauri webview uses. */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.thin-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 9999px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-ink-faint);
 }
 
 /*
