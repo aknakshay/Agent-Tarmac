@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { isMuted, playGameSound, setMuted } from "../lib/gameSound";
 import { loadBest, saveBest, type BestScore } from "../lib/tarmacDefenseBest";
 import {
   circlesOverlap,
@@ -197,6 +198,15 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
   const stateRef = useRef<GameState>(newGame(480, 360));
   const keysRef = useRef<Set<string>>(new Set());
   const reducedMotionRef = useRef(false);
+  const [muted, setMutedState] = useState(() => isMuted());
+
+  const toggleMute = () => {
+    setMutedState((prev) => {
+      const next = !prev;
+      setMuted(next);
+      return next;
+    });
+  };
 
   useEffect(() => {
     reducedMotionRef.current = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -209,6 +219,10 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
         return;
       }
       const key = e.key.toLowerCase();
+      if (key === "m") {
+        toggleMute();
+        return;
+      }
       keysRef.current.add(key);
       if (key === " ") e.preventDefault();
       if (stateRef.current.phase === "gameover" && (key === " " || key === "enter")) {
@@ -324,6 +338,7 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
           for (let i = 0; i < state.wingmen; i += 1) {
             shootFrom(state.playerX + (i === 0 ? -WINGMAN_OFFSET : WINGMAN_OFFSET));
           }
+          playGameSound("shoot");
         }
 
         if (state.comboTimer > 0) {
@@ -364,6 +379,9 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
             if (e.hp <= 0) {
               registerKill(state, e, time);
               e.y = state.height + 999;
+              playGameSound("explosion");
+            } else {
+              playGameSound(e.type === "tank" ? "bossHit" : "enemyHit");
             }
           }
         }
@@ -373,6 +391,7 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
           if (!circlesOverlap(state.playerX, py, p.x, p.y, 16)) return p.y < state.height + 20;
           applyPowerUp(state, p.type, time);
           spawnParticles(state, p.x, p.y, POWERUP_COLOR[p.type], 10);
+          playGameSound("powerUp");
           return false;
         });
 
@@ -408,9 +427,11 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
             state.best = { score: state.score, level: state.level };
             saveBest(state.best);
           }
+          playGameSound("gameOver");
         } else if (state.remainingToSpawn === 0 && state.enemies.length === 0) {
           state.phase = "interstitial";
           state.phaseUntil = time + INTERSTITIAL_MS;
+          playGameSound("waveClear");
         }
       } else if (state.phase === "interstitial" && time >= state.phaseUntil) {
         freshWave(state, state.level + 1);
@@ -430,10 +451,50 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
   return (
     <div className="relative h-full w-full overflow-hidden bg-app-bg">
       <canvas ref={canvasRef} className="block h-full w-full" role="img" aria-label="Tarmac Defense mini-game" />
+      <button
+        type="button"
+        onClick={toggleMute}
+        aria-label={muted ? "Unmute game sound" : "Mute game sound"}
+        aria-pressed={muted}
+        className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-ink-faint hover:text-ink"
+      >
+        {muted ? <SpeakerOffIcon /> : <SpeakerOnIcon />}
+      </button>
       <p className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 text-xs text-ink-faint">
-        Arrows/WASD to move · Space to fire · Esc to exit
+        Arrows/WASD to move · Space to fire · M to mute · Esc to exit
       </p>
     </div>
+  );
+}
+
+function SpeakerOnIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+      <path d="M1 6v4h3l4 3V3L4 6H1z" />
+      <path
+        d="M11.2 5.1a3.5 3.5 0 0 1 0 5.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12.6 3.3a5.8 5.8 0 0 1 0 9.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function SpeakerOffIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+      <path d="M1 6v4h3l4 3V3L4 6H1z" />
+      <path d="M11 6.2l3.6 3.6M14.6 6.2 11 9.8" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
   );
 }
 
