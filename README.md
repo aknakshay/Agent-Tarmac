@@ -83,7 +83,7 @@ FleetCode is the closest competitor — multi-session embedded terminals with `-
 
 ## Known limitations
 
-- **Popped-out sessions aren't tracked across an app restart.** A session ejected to Ghostty is tracked by transcript watching only while Agent Tarmac keeps running. After a relaunch, that session shows as `Dormant` in the sidebar — the app has no memory of it still running externally. Resuming it in-app at that point starts a second `claude --resume` process against the same transcript, alongside the one still running in Ghostty. Workaround: stop the external session (or note which ones are popped out) before quitting and relaunching. A real fix — reconciling against still-running external processes on startup — is post-v1.
+- None currently blocking. Popped-out sessions now survive app restarts: the external set is persisted and reconciled against still-running processes at startup (v0.2.0). Found something? [Open an issue](https://github.com/aknakshay/Agent-Tarmac/issues).
 
 ## Roadmap
 
