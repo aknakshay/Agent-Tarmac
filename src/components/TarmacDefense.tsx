@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { loadBest, saveBest, type BestScore } from "../lib/tarmacDefenseBest";
 
 /**
  * Tarmac Defense — a small canvas space shooter, easter egg reachable only
@@ -17,34 +18,6 @@ const HEIGHT = 360;
 const PLAYER_HALF = 12;
 const BULLET_SPEED = 6;
 const INTERSTITIAL_MS = 1400;
-const BEST_KEY = "tarmac-defense-best";
-
-interface BestScore {
-  score: number;
-  level: number;
-}
-
-function loadBest(): BestScore {
-  try {
-    const raw = localStorage.getItem(BEST_KEY);
-    if (!raw) return { score: 0, level: 1 };
-    const parsed = JSON.parse(raw) as Partial<BestScore>;
-    if (typeof parsed.score === "number" && typeof parsed.level === "number") {
-      return { score: parsed.score, level: parsed.level };
-    }
-  } catch {
-    // ignore malformed/unavailable storage — fall through to defaults
-  }
-  return { score: 0, level: 1 };
-}
-
-function saveBest(best: BestScore) {
-  try {
-    localStorage.setItem(BEST_KEY, JSON.stringify(best));
-  } catch {
-    // best-effort only; a private window or full storage just loses the record
-  }
-}
 
 type EnemyType = "straight" | "zigzag" | "diver";
 

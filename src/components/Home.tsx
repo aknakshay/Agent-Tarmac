@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDeck } from "../store";
 import { computeFleetStats } from "../lib/stats";
+import { loadBest, type BestScore } from "../lib/tarmacDefenseBest";
 import { Logo, RunwayDivider } from "./icons/BrandMotifs";
 import { TarmacDefense } from "./TarmacDefense";
 
@@ -18,6 +19,13 @@ export function Home() {
   const stats = useMemo(() => computeFleetStats(sessions, projectNames), [sessions, projectNames]);
   const allQuiet = stats.rightNow.live === 0;
   const [playing, setPlaying] = useState(false);
+  const [best, setBest] = useState<BestScore | null>(null);
+
+  // Read on mount and whenever the game hands control back — a run just
+  // played may have set a new best.
+  useEffect(() => {
+    if (!playing) setBest(loadBest());
+  }, [playing]);
 
   if (playing) {
     return <TarmacDefense onExit={() => setPlaying(false)} />;
@@ -47,6 +55,8 @@ export function Home() {
             <StatTile label="Idle" value={stats.rightNow.idle} tone="neutral" />
           </div>
         </section>
+
+        <PlayCard best={best} onPlay={() => setPlaying(true)} />
 
         <RunwayDivider />
 
@@ -80,16 +90,34 @@ export function Home() {
             <StatTile label="Projects" value={stats.totals.projects} tone="neutral" />
           </div>
         </section>
-
-        <button
-          type="button"
-          onClick={() => setPlaying(true)}
-          className="self-center rounded-md px-3 py-1.5 text-xs text-ink-faint transition-colors duration-150 hover:text-ink-muted"
-        >
-          Play Tarmac Defense
-        </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Prominent launcher for the Tarmac Defense mini-game, placed right after
+ * the Right-now tiles per product feedback ("make the game play CTA much
+ * above") — it was previously a small footer link, easy to miss entirely.
+ */
+function PlayCard({ best, onPlay }: { best: BestScore | null; onPlay: () => void }) {
+  return (
+    <section className="flex items-center gap-4 rounded-xl border border-accent/25 bg-accent/[0.06] px-5 py-4">
+      <Logo className="h-8 w-8 shrink-0 text-accent" />
+      <div className="flex-1">
+        <h2 className="text-sm font-semibold text-ink">Tarmac Defense</h2>
+        <p className="text-xs text-ink-faint">
+          {best && best.score > 0 ? `Best: ${best.score} pts · Level ${best.level}` : "No runs yet"}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onPlay}
+        className="shrink-0 rounded-md bg-accent px-3.5 py-1.5 text-sm font-medium text-app-bg transition-colors duration-150 hover:bg-accent/85"
+      >
+        Play
+      </button>
+    </section>
   );
 }
 
