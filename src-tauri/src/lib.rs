@@ -1,3 +1,4 @@
+mod activity;
 mod session_index;
 mod transcript;
 mod workspace_store;
