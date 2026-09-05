@@ -60,19 +60,6 @@ describe("computeFleetStats", () => {
     expect(stats.mostActiveProject).toBeNull();
   });
 
-  it("builds a 7-day sparkline, oldest day first, ending on today", () => {
-    const sessions: Record<string, Session> = {
-      a: session({ id: "a", lastActivity: "2026-08-10T09:00:00.000Z" }),
-      b: session({ id: "b", lastActivity: "2026-08-08T09:00:00.000Z" }),
-    };
-    const stats = computeFleetStats(sessions, {}, NOW);
-    expect(stats.sparkline).toHaveLength(7);
-    expect(stats.sparkline[6].date).toBe("2026-08-10");
-    expect(stats.sparkline[6].count).toBe(1);
-    expect(stats.sparkline[0].date).toBe("2026-08-04");
-    expect(stats.sparkline.find((d) => d.date === "2026-08-08")?.count).toBe(1);
-  });
-
   it("computes fleet totals across all sessions and distinct projects", () => {
     const sessions: Record<string, Session> = {
       a: session({ id: "a", cwd: "/proj/a" }),
@@ -90,7 +77,5 @@ describe("computeFleetStats", () => {
     expect(stats.activeToday).toBe(0);
     expect(stats.mostActiveProject).toBeNull();
     expect(stats.totals).toEqual({ sessions: 0, projects: 0 });
-    expect(stats.sparkline).toHaveLength(7);
-    expect(stats.sparkline.every((d) => d.count === 0)).toBe(true);
   });
 });

@@ -9,12 +9,6 @@ export interface RightNowStats {
   live: number;
 }
 
-export interface SparklineDay {
-  /** UTC date, YYYY-MM-DD. */
-  date: string;
-  count: number;
-}
-
 export interface MostActiveProject {
   label: string;
   count: number;
@@ -27,18 +21,11 @@ export interface FleetStats {
    * closest honest signal available. */
   activeToday: number;
   mostActiveProject: MostActiveProject | null;
-  /** Last 7 days, oldest first, today last. Labelled "active sessions by
-   * day" in the UI for the same reason as `activeToday` — this counts
-   * sessions whose last activity fell on that day, not sessions started
-   * that day. */
-  sparkline: SparklineDay[];
   totals: {
     sessions: number;
     projects: number;
   };
 }
-
-const SPARKLINE_DAYS = 7;
 
 /**
  * Buckets a timestamp by the user's LOCAL calendar day, not UTC. Slicing the
@@ -84,26 +71,12 @@ export function computeFleetStats(
     }
   }
 
-  const sparklineCounts = new Map<string, number>();
-  for (const session of all) {
-    const key = dayKey(session.lastActivity);
-    sparklineCounts.set(key, (sparklineCounts.get(key) ?? 0) + 1);
-  }
-  const sparkline: SparklineDay[] = [];
-  for (let i = SPARKLINE_DAYS - 1; i >= 0; i -= 1) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const key = dayKey(d);
-    sparkline.push({ date: key, count: sparklineCounts.get(key) ?? 0 });
-  }
-
   const projects = new Set(all.map((s) => s.cwd).filter((cwd): cwd is string => Boolean(cwd)));
 
   return {
     rightNow,
     activeToday: activeTodaySessions.length,
     mostActiveProject,
-    sparkline,
     totals: { sessions: all.length, projects: projects.size },
   };
 }

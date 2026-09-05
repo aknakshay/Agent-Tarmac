@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import { useDeck } from "../store";
-import { computeFleetStats, type SparklineDay } from "../lib/stats";
+import { computeFleetStats } from "../lib/stats";
 import { Logo, RunwayDivider } from "./icons/BrandMotifs";
 import { TarmacDefense } from "./TarmacDefense";
 
 /**
  * Replaces the "no session selected" placeholder. A calm fleet overview —
- * what's running right now, what happened today, and the sparkline/totals
+ * what's running right now, what happened today, and the fleet totals
  * for a longer view — rather than an empty pane. See motifs.md for the
  * runway-centerline divider and ATC copy this borrows.
  */
@@ -69,7 +69,6 @@ export function Home() {
               </div>
             )}
           </div>
-          <Sparkline data={stats.sparkline} />
         </section>
 
         <RunwayDivider />
@@ -114,58 +113,6 @@ function StatTile({
     <div className="flex flex-col items-center gap-1 rounded-lg border border-border px-3 py-4">
       <span className={`text-2xl font-semibold tabular-nums ${TILE_TONE_CLASS[tone]}`}>{value}</span>
       <span className="text-center text-xs text-ink-faint">{label}</span>
-    </div>
-  );
-}
-
-/**
- * 7-day bar sparkline sitting on a dashed runway-centerline baseline (see
- * motifs.md a). Counts sessions by last-activity day, not session start —
- * `SessionMeta` has no creation timestamp, so the label says "active
- * sessions by day" rather than implying a start count it can't back up.
- */
-function Sparkline({ data }: { data: SparklineDay[] }) {
-  const max = Math.max(1, ...data.map((d) => d.count));
-  const barWidth = 100 / data.length;
-  const baselineY = 28;
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      <svg
-        viewBox="0 0 100 32"
-        preserveAspectRatio="none"
-        className="h-8 w-full"
-        role="img"
-        aria-label={`Active sessions per day, last 7 days: ${data.map((d) => `${d.date} ${d.count}`).join(", ")}`}
-      >
-        <line
-          x1="0"
-          y1={baselineY}
-          x2="100"
-          y2={baselineY}
-          stroke="var(--color-border)"
-          strokeWidth="1"
-          strokeDasharray="2 2"
-          vectorEffect="non-scaling-stroke"
-        />
-        {data.map((d, i) => {
-          const h = (d.count / max) * 22;
-          if (h <= 0) return null;
-          return (
-            <rect
-              key={d.date}
-              x={i * barWidth + barWidth * 0.22}
-              y={baselineY - h}
-              width={barWidth * 0.56}
-              height={h}
-              rx="1"
-              fill="var(--color-accent)"
-              opacity={0.85}
-            />
-          );
-        })}
-      </svg>
-      <div className="text-xs text-ink-faint">active sessions by day, last 7 days</div>
     </div>
   );
 }
