@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
+import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useDeck } from "../store";
-import { computeFleetStats } from "../lib/stats";
+import { computeFleetStats, playCardFraming, type RightNowStats } from "../lib/stats";
 import { loadBest, type BestScore } from "../lib/tarmacDefenseBest";
 import { Logo, RunwayDivider } from "./icons/BrandMotifs";
 import { TarmacDefense } from "./TarmacDefense";
+
+interface UpdateAvailablePayload {
+  version: string;
+  url: string;
+}
 
 /**
  * Replaces the "no session selected" placeholder. A calm fleet overview —
@@ -26,6 +34,22 @@ export function Home() {
   useEffect(() => {
     if (!playing) setBest(loadBest());
   }, [playing]);
+
+  const [version, setVersion] = useState<string | null>(null);
+  const [update, setUpdate] = useState<UpdateAvailablePayload | null>(null);
+  useEffect(() => {
+    getVersion()
+      .then(setVersion)
+      .catch(() => setVersion(null));
+    // Parallel listener to UpdateBanner's (same event, additive display) —
+    // same StrictMode-safe promise-cleanup pattern.
+    const updateAvailable = listen<UpdateAvailablePayload>("update_available", (event) =>
+      setUpdate(event.payload),
+    );
+    return () => {
+      updateAvailable.then((unlisten) => unlisten());
+    };
+  }, []);
 
   if (playing) {
     return <TarmacDefense onExit={() => setPlaying(false)} />;
@@ -56,7 +80,7 @@ export function Home() {
           </div>
         </section>
 
-        <PlayCard best={best} onPlay={() => setPlaying(true)} />
+        <PlayCard best={best} rightNow={stats.rightNow} onPlay={() => setPlaying(true)} />
 
         <RunwayDivider />
 
@@ -90,6 +114,24 @@ export function Home() {
             <StatTile label="Projects" value={stats.totals.projects} tone="neutral" />
           </div>
         </section>
+
+        <footer className="flex items-center justify-center gap-1.5 pt-2 text-xs text-ink-faint">
+          <span>Agent Tarmac{version ? ` v${version}` : ""}</span>
+          <span aria-hidden="true">·</span>
+          {update ? (
+            <button
+              type="button"
+              onClick={() =>
+                openUrl(update.url).catch((err) => console.error("Failed to open release page", err))
+              }
+              className="font-medium text-accent transition-opacity duration-150 hover:opacity-80"
+            >
+              v{update.version} available — view release
+            </button>
+          ) : (
+            <span>up to date</span>
+          )}
+        </footer>
       </div>
     </div>
   );
@@ -100,14 +142,32 @@ export function Home() {
  * the Right-now tiles per product feedback ("make the game play CTA much
  * above") — it was previously a small footer link, easy to miss entirely.
  */
-function PlayCard({ best, onPlay }: { best: BestScore | null; onPlay: () => void }) {
+function PlayCard({
+  best,
+  rightNow,
+  onPlay,
+}: {
+  best: BestScore | null;
+  rightNow: RightNowStats;
+  onPlay: () => void;
+}) {
+  // The game exists for the wait-while-agents-work moment: an invitation
+  // when agents are heads-down, quiet when something needs the user
+  // (playCardFraming returns null then, and the card never competes for
+  // attention). Logic lives in stats.ts where it's unit-tested.
+  const framing = playCardFraming(rightNow);
+  const bestLine = best && best.score > 0 ? `Best: ${best.score} pts · Level ${best.level}` : "No runs yet";
   return (
-    <section className="flex items-center gap-4 rounded-xl border border-accent/25 bg-accent/[0.06] px-5 py-4">
+    <section
+      className={`flex items-center gap-4 rounded-xl border px-5 py-4 ${
+        framing?.emphasize ? "border-accent/50 bg-accent/[0.1]" : "border-accent/25 bg-accent/[0.06]"
+      }`}
+    >
       <Logo className="h-8 w-8 shrink-0 text-accent" />
       <div className="flex-1">
         <h2 className="text-sm font-semibold text-ink">Tarmac Defense</h2>
         <p className="text-xs text-ink-faint">
-          {best && best.score > 0 ? `Best: ${best.score} pts · Level ${best.level}` : "No runs yet"}
+          {framing ? `${framing.subtitle} · ${bestLine}` : bestLine}
         </p>
       </div>
       <button

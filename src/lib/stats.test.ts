@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeFleetStats } from "./stats";
+import { computeFleetStats, playCardFraming, type RightNowStats } from "./stats";
 import type { Session } from "../types";
 
 function session(overrides: Partial<Session>): Session {
@@ -77,5 +77,37 @@ describe("computeFleetStats", () => {
     expect(stats.activeToday).toBe(0);
     expect(stats.mostActiveProject).toBeNull();
     expect(stats.totals).toEqual({ sessions: 0, projects: 0 });
+  });
+});
+
+function rightNow(overrides: Partial<RightNowStats>): RightNowStats {
+  return { working: 0, needsYou: 0, idle: 0, live: 0, ...overrides };
+}
+
+describe("playCardFraming", () => {
+  it("stays quiet (null) when any session needs the user", () => {
+    expect(playCardFraming(rightNow({ needsYou: 1, working: 2, live: 3 }))).toBeNull();
+  });
+
+  it("emphasizes when every live session is working", () => {
+    const framing = playCardFraming(rightNow({ working: 3, live: 3 }));
+    expect(framing).toEqual({ subtitle: "3 agents working — you've got a minute.", emphasize: true });
+  });
+
+  it("uses singular phrasing for exactly one working session", () => {
+    const framing = playCardFraming(rightNow({ working: 1, live: 1 }));
+    expect(framing?.subtitle).toBe("1 agent working — you've got a minute.");
+  });
+
+  it("falls back to a quiet invite when nothing is working and nothing needs you", () => {
+    expect(playCardFraming(rightNow({ idle: 2, live: 2 }))).toEqual({
+      subtitle: "All agents heads-down? Take a flight.",
+      emphasize: false,
+    });
+  });
+
+  it("falls back to the quiet invite when some but not all live sessions are working", () => {
+    const framing = playCardFraming(rightNow({ working: 1, idle: 1, live: 2 }));
+    expect(framing).toEqual({ subtitle: "All agents heads-down? Take a flight.", emphasize: false });
   });
 });

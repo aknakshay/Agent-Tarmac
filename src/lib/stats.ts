@@ -9,6 +9,29 @@ export interface RightNowStats {
   live: number;
 }
 
+export interface PlayCardFraming {
+  subtitle: string;
+  /** True when every live session is heads-down working — a good moment to invite a run. */
+  emphasize: boolean;
+}
+
+/**
+ * Copy for the Tarmac Defense play card on Home, framed around "play while
+ * your agents work" rather than as a generic game link. Returns null when a
+ * session needs the user — the card should stay quiet and not compete for
+ * attention, so the caller falls back to plain best-score copy instead.
+ */
+export function playCardFraming(rightNow: RightNowStats): PlayCardFraming | null {
+  if (rightNow.needsYou > 0) return null;
+  if (rightNow.working > 0 && rightNow.working === rightNow.live) {
+    return {
+      subtitle: `${rightNow.working} agent${rightNow.working === 1 ? "" : "s"} working — you've got a minute.`,
+      emphasize: true,
+    };
+  }
+  return { subtitle: "All agents heads-down? Take a flight.", emphasize: false };
+}
+
 export interface MostActiveProject {
   label: string;
   count: number;
