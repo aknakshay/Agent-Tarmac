@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Claude Deck",
+  "productName": "Agent Tarmac",
   "version": "0.1.0",
-  "identifier": "dev.claudedeck.app",
+  "identifier": "dev.agenttarmac.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "Claude Deck",
-        "width": 800,
-        "height": 600
+        "title": "Agent Tarmac",
+        "width": 900,
+        "height": 640,
+        "minWidth": 900,
+        "minHeight": 600
       }
     ],
     "security": {
