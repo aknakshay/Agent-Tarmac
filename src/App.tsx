@@ -7,6 +7,7 @@ import { TerminalPane } from "./components/TerminalPane";
 import { CommandBar } from "./components/CommandBar";
 import { NewSessionDialog } from "./components/NewSessionDialog";
 import { RestoreBanner } from "./components/RestoreBanner";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { writeExited, writeOutput } from "./terminals";
 import type { SessionMeta, StatusChange } from "./types";
 import type { Workspace } from "./lib/workspaceMeta";
@@ -129,6 +130,7 @@ function App() {
         onOpenNewSession={() => setNewSessionOpen(true)}
       />
       <main className="relative flex-1">
+        <UpdateBanner />
         <RestoreBanner />
         {openIds.map((id) => (
           <TerminalPane key={id} sessionId={id} active={id === activeId} />

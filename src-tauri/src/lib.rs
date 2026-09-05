@@ -4,6 +4,7 @@ pub mod pty_manager;
 pub mod session_index;
 pub mod status_loop;
 pub mod transcript;
+pub mod update_check;
 pub mod workspace_store;
 
 use std::sync::Mutex;
@@ -44,6 +45,7 @@ pub fn run() {
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());
             status_loop::start(app.handle().clone());
+            update_check::start(app.handle().clone());
 
             // Intentionally NOT reconciled against PtyManager here: nothing
             // has been spawned yet at startup, so `is_running` would be false
