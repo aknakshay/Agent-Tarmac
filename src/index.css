@@ -20,6 +20,13 @@
   --color-needs-you: oklch(79% 0.15 70);
 }
 
+:root {
+  /* Kill-switch for the terminal-pane brand watermark (TerminalPane.tsx).
+     Set to 0 to disable it outright without touching markup. Deliberately
+     low — legibility of terminal text always outranks branding. */
+  --watermark-opacity: 0.03;
+}
+
 html,
 body,
 #root {

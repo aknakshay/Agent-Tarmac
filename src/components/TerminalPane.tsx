@@ -6,6 +6,7 @@ import { basename } from "../lib/paths";
 import { displayTitle } from "../lib/session";
 import { BringBackDialog } from "./BringBackDialog";
 import { JetIcon } from "./JetIcon";
+import { Logo } from "./icons/BrandMotifs";
 
 interface PopOutResult {
   app: "ghostty" | "terminal";
@@ -236,6 +237,18 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
             header's tight spacing above. FitAddon measures this container,
             so the padding is already accounted for on every refit. */}
         <div ref={containerRef} className="h-full w-full px-2 pt-1 pb-2" />
+        {/* Static brand watermark. Kept as a DOM overlay above the xterm
+            canvas (rather than composited into its background) so it works
+            identically whether xterm is using the WebGL or canvas renderer,
+            and never risks the WebGL renderer's transparency handling. Kill
+            switch: --watermark-opacity in index.css. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute right-3 bottom-3 h-9 w-9 text-ink-faint"
+          style={{ opacity: "var(--watermark-opacity)" }}
+        >
+          <Logo className="h-full w-full" />
+        </div>
         {resumeError && (
           <div
             role="alert"
