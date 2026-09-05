@@ -6,7 +6,14 @@ interface DeckState {
   sessions: Record<string, Session>;
   openIds: string[]; // sessions with a terminal pane created
   activeId: string | null;
-  /** Merges a fresh session list from the backend, preserving status/badge/favorite for known ids. */
+  /**
+   * Merges a fresh session list from the backend, preserving status/badge/
+   * favorite for known ids. A session missing from `metas` is dropped unless
+   * it's still "live" in this app — open in a pane, or a `start_new_session`
+   * placeholder (`new-*`) whose transcript the watcher hasn't surfaced yet —
+   * since an unrelated rescan (any transcript write under the projects dir)
+   * would otherwise wipe it out from under an open pane.
+   */
   setSessions(metas: SessionMeta[]): void;
   /** Sets a session's status. Sets badge=true if the session becomes needsYou while unfocused. */
   setStatus(id: string, status: Status): void;
@@ -27,6 +34,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
 
   setSessions: (metas) => {
     const existing = get().sessions;
+    const openIds = get().openIds;
     const next: Record<string, Session> = {};
     for (const meta of metas) {
       const prev = existing[meta.id];
@@ -39,6 +47,10 @@ export const useDeck = create<DeckState>()((set, get) => ({
         favorite: prev?.favorite ?? false,
         badge: prev?.badge ?? false,
       };
+    }
+    for (const [id, session] of Object.entries(existing)) {
+      if (id in next) continue;
+      if (openIds.includes(id) || id.startsWith("new-")) next[id] = session;
     }
     set({ sessions: next });
   },

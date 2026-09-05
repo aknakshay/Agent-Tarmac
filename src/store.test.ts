@@ -45,4 +45,39 @@ describe("useDeck", () => {
     });
     expect(s.activeId).toBe("new-456");
   });
+
+  it("setSessions preserves a placeholder stub through an unrelated rescan", () => {
+    useDeck.getState().focus("new-x", "/tmp/foo");
+    // Simulate a rescan triggered by unrelated transcript activity: the
+    // placeholder isn't in the backend's list yet (its transcript hasn't
+    // been written), and no other sessions exist either.
+    useDeck.getState().setSessions([]);
+    const s = useDeck.getState();
+    expect(s.sessions["new-x"]).toMatchObject({
+      id: "new-x",
+      cwd: "/tmp/foo",
+      title: "foo",
+      status: "working",
+    });
+  });
+
+  it("setSessions drops a stale session that is neither open nor a placeholder", () => {
+    useDeck.setState({
+      sessions: {
+        orphan: {
+          id: "orphan",
+          cwd: "/p",
+          title: "t",
+          lastActivity: "2026-09-05T10:00:00Z",
+          status: "idle",
+          favorite: false,
+          badge: false,
+        },
+      },
+      openIds: [],
+      activeId: null,
+    });
+    useDeck.getState().setSessions([]);
+    expect(useDeck.getState().sessions["orphan"]).toBeUndefined();
+  });
 });
