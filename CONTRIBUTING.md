@@ -44,5 +44,6 @@ These are deliberately out of scope for v1 and will be filed as GitHub issues on
 - Settings pane (notification toggle, clear-metadata action)
 - Web/mobile remote access
 - Linux/Windows support
+- Persist which session tabs were open across a restart and reopen them without auto-resuming dormant ones (the `open_session_ids` field was in `Workspace` but never wired up — dropped for v1 rather than shipped half-implemented; see Task 13 review)
 
 If you want to pick one of these up, open an issue first to discuss the approach — several depend on the `SessionBackend` trait boundary landing cleanly.

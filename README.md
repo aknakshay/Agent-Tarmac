@@ -53,12 +53,12 @@ Requires the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`cl
 `scripts/fake-claude.sh` is a stand-in for the real CLI — it starts, prompts, and echoes stdin without touching a real Claude Code session, so you can develop and test the whole app loop without spending real agent turns:
 
 ```sh
-export CLAUDE_DECK_PROJECTS_DIR="$PWD/src-tauri/tests/fixtures/projects"
-export CLAUDE_DECK_CLAUDE_BIN="$PWD/scripts/fake-claude.sh"
+export AGENT_TARMAC_PROJECTS_DIR="$PWD/src-tauri/tests/fixtures/projects"
+export AGENT_TARMAC_CLAUDE_BIN="$PWD/scripts/fake-claude.sh"
 npm run tauri dev
 ```
 
-`CLAUDE_DECK_PROJECTS_DIR` points the session index at a fixture directory instead of the real `~/.claude/projects`; `CLAUDE_DECK_CLAUDE_BIN` swaps in the fake binary everywhere the app would otherwise spawn `claude`. Both env vars are read once at startup by the Rust backend (`session_index.rs`, `pty_manager.rs`).
+`AGENT_TARMAC_PROJECTS_DIR` points the session index at a fixture directory instead of the real `~/.claude/projects`; `AGENT_TARMAC_CLAUDE_BIN` swaps in the fake binary everywhere the app would otherwise spawn `claude`. Both env vars are read once at startup by the Rust backend (`session_index.rs`, `pty_manager.rs`).
 
 ### Tests
 
@@ -71,7 +71,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full checklist before opening a P
 
 ## How it compares
 
-|  | Agent Tarmac | [FleetCode](https://github.com) | [opcode](https://github.com) | claude-terminal / cc-pane | agent-session-manager |
+|  | Agent Tarmac | [FleetCode](https://github.com/built-by-as/FleetCode) | [opcode](https://github.com/winfunc/opcode) | claude-terminal / cc-pane | agent-session-manager |
 |---|---|---|---|---|---|
 | Sessions started outside the app | ✅ any session in `~/.claude/projects` | ❌ app-created only | ❌ chat GUI, not a terminal cockpit | ❌ layout manager only | ✅ |
 | Live activity status (Working/NeedsYou/etc.) | ✅ | ❌ | ❌ | ❌ | ➖ unclear |
@@ -81,6 +81,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full checklist before opening a P
 | Platform | macOS (Tauri) | Node/Electron | macOS/Linux/Windows (Tauri) | macOS (Tauri) | Linux only (GTK4) |
 
 FleetCode is the closest competitor — multi-session embedded terminals with `--resume` persistence and git-worktree isolation — but it only manages sessions it created and has no activity status. Agent Tarmac is mission control for every session on the machine, with live status, regardless of what started it.
+
+## Known limitations
+
+- **Popped-out sessions aren't tracked across an app restart.** A session ejected to Ghostty is tracked by transcript watching only while Agent Tarmac keeps running. After a relaunch, that session shows as `Dormant` in the sidebar — the app has no memory of it still running externally. Resuming it in-app at that point starts a second `claude --resume` process against the same transcript, alongside the one still running in Ghostty. Workaround: stop the external session (or note which ones are popped out) before quitting and relaunching. A real fix — reconciling against still-running external processes on startup — is post-v1.
 
 ## Roadmap
 
@@ -95,6 +99,7 @@ Post-v1, tracked as GitHub issues once this repo is public:
 - Settings pane (notification toggle, clear-metadata action)
 - Web/mobile remote access
 - Linux/Windows support
+- Persist which session tabs were open across a restart (which panes were open, not just which were live) and reopen them without auto-resuming dormant ones
 
 ## License
 

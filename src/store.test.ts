@@ -5,7 +5,7 @@ import { isSessionUnread, displayTitle } from "./lib/session";
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn((cmd: string) => {
     if (cmd === "get_workspace") {
-      return Promise.resolve({ live_session_ids: [], open_session_ids: [], favorites: [], session_meta: {} });
+      return Promise.resolve({ live_session_ids: [], favorites: [], session_meta: {} });
     }
     return Promise.resolve(undefined);
   }),
@@ -138,7 +138,6 @@ describe("useDeck", () => {
       useDeck.setState({ sessions: { a: { id: "a", ...baseSession } } });
       useDeck.getState().hydrateMeta({
         live_session_ids: [],
-        open_session_ids: [],
         favorites: ["a"],
         session_meta: {
           a: { last_seen_at: "2026-09-05T09:00:00Z", marked_unread: true, tags: ["urgent"], custom_title: "Renamed" },

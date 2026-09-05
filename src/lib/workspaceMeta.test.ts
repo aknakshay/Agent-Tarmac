@@ -28,7 +28,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 const { updateWorkspace } = await import("./workspaceMeta");
 
 beforeEach(async () => {
-  stored = { live_session_ids: [], open_session_ids: [], favorites: [], session_meta: {} };
+  stored = { live_session_ids: [], favorites: [], session_meta: {} };
   const invokeMock = (await import("@tauri-apps/api/core")).invoke as ReturnType<typeof vi.fn>;
   invokeMock.mockClear();
 });

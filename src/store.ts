@@ -82,7 +82,6 @@ interface DeckState {
    * session, and stamps `lastSeenAt` on the session being switched away from.
    */
   focus(id: string, cwd?: string | null): void;
-  closePane(id: string): void;
   /** Merges persisted `session_meta`/`favorites` from `workspace.json` into known sessions. */
   hydrateMeta(ws: Workspace): void;
   /** Sets the explicit unread flag. Persists (debounced). */
@@ -197,13 +196,6 @@ export const useDeck = create<DeckState>()((set, get) => ({
 
     if (prevActiveId && prevActiveId !== id) scheduleMetaPersist(prevActiveId, get);
     scheduleMetaPersist(id, get);
-  },
-
-  closePane: (id) => {
-    set((state) => ({
-      openIds: state.openIds.filter((openId) => openId !== id),
-      activeId: state.activeId === id ? null : state.activeId,
-    }));
   },
 
   hydrateMeta: (ws) => {

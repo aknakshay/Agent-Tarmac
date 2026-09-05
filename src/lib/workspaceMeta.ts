@@ -11,17 +11,9 @@ export interface WireSessionMetaEntry {
 /** Wire shape of the Rust `Workspace` struct (snake_case). */
 export interface Workspace {
   live_session_ids: string[];
-  open_session_ids: string[];
   favorites: string[];
   session_meta: Record<string, WireSessionMetaEntry>;
 }
-
-export const EMPTY_META_ENTRY: WireSessionMetaEntry = {
-  last_seen_at: null,
-  marked_unread: false,
-  tags: [],
-  custom_title: null,
-};
 
 /**
  * Serializes every `updateWorkspace` call through one in-flight chain. The

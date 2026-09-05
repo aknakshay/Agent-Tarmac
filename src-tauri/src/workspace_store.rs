@@ -26,12 +26,11 @@ pub struct SessionMetaEntry {
 #[derive(Default, Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Workspace {
     pub live_session_ids: Vec<String>,
-    pub open_session_ids: Vec<String>,
     pub favorites: Vec<String>,
     /// `#[serde(default)]` so a workspace.json written before this field
     /// existed still loads instead of falling back to `Workspace::default()`
-    /// (which would silently wipe live_session_ids/open_session_ids/favorites
-    /// too, since `load` treats any parse error as "start fresh").
+    /// (which would silently wipe live_session_ids/favorites too, since
+    /// `load` treats any parse error as "start fresh").
     #[serde(default)]
     pub session_meta: HashMap<String, SessionMetaEntry>,
 }
@@ -161,7 +160,6 @@ mod tests {
         let p = dir.path().join("ws.json");
         let ws = Workspace {
             live_session_ids: vec!["a".into()],
-            open_session_ids: vec![],
             favorites: vec!["b".into()],
             ..Default::default()
         };
@@ -181,6 +179,9 @@ mod tests {
     fn old_format_without_session_meta_still_loads() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("ws.json");
+        // Includes the now-removed `open_session_ids` field, to prove an
+        // on-disk workspace.json from before it was dropped still loads —
+        // serde ignores unknown fields by default.
         std::fs::write(
             &p,
             r#"{"live_session_ids":["a"],"open_session_ids":["b"],"favorites":["c"]}"#,
@@ -188,7 +189,6 @@ mod tests {
         .unwrap();
         let ws = load(&p);
         assert_eq!(ws.live_session_ids, vec!["a".to_string()]);
-        assert_eq!(ws.open_session_ids, vec!["b".to_string()]);
         assert_eq!(ws.favorites, vec!["c".to_string()]);
         assert!(ws.session_meta.is_empty());
     }
