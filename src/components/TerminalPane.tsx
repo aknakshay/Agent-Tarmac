@@ -7,9 +7,10 @@ import { displayTitle } from "../lib/session";
 import { BringBackDialog } from "./BringBackDialog";
 import { JetIcon } from "./JetIcon";
 import { Logo } from "./icons/BrandMotifs";
+import { defaultTerminal, terminalLabel } from "../lib/terminals";
 
 interface PopOutResult {
-  app: "ghostty" | "terminal";
+  app: string;
 }
 
 const RESIZE_DEBOUNCE_MS = 100;
@@ -112,14 +113,19 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
       .finally(() => setStopping(false));
   };
 
-  const handlePopOut = () => {
+  const availableTerminals = useDeck((state) => state.availableTerminals);
+  const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
+  const popOutDefault = defaultTerminal(availableTerminals);
+
+  const handlePopOut = (terminal: string) => {
+    setTerminalMenuOpen(false);
     setPoppingOut(true);
     setPopOutError(null);
-    invoke<PopOutResult>("pop_out_to_ghostty", { sessionId })
+    invoke<PopOutResult>("pop_out_to_ghostty", { sessionId, terminal })
       .then((result) => {
         writeInfoLine(
           sessionId,
-          `popped out to ${result.app === "ghostty" ? "Ghostty" : "Terminal"} — this pane is now read-only until resumed here`,
+          `popped out to ${terminalLabel(result.app)} — this pane is now read-only until resumed here`,
         );
         setIsPoppedOut(true);
       })
@@ -204,20 +210,63 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
           </span>
         )}
 
-        {/* "Open in Ghostty" — shown when not already popped out */}
+        {/* Pop-out control: main click opens the default detected terminal;
+            the ⋯ reveals every other installed terminal for a per-use pick. */}
         {cwd && !isPoppedOut && (
-          <button
-            type="button"
-            title="Open in Ghostty"
-            onClick={handlePopOut}
-            disabled={poppingOut}
-            className={`flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-ink-muted transition-colors duration-100 hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 ${
-              status !== "dormant" ? "" : "ml-auto"
-            }`}
+          <div
+            className={`relative flex shrink-0 items-center ${status !== "dormant" ? "" : "ml-auto"}`}
           >
-            <PopOutIcon />
-            Open in Ghostty
-          </button>
+            <button
+              type="button"
+              title={`Open in ${terminalLabel(popOutDefault)}`}
+              onClick={() => handlePopOut(popOutDefault)}
+              disabled={poppingOut}
+              className={`flex h-6 items-center gap-1.5 border border-border px-2 text-xs font-medium text-ink-muted transition-colors duration-100 hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50 ${
+                availableTerminals.length > 1 ? "rounded-l-md border-r-0" : "rounded-md"
+              }`}
+            >
+              <PopOutIcon />
+              Open in {terminalLabel(popOutDefault)}
+            </button>
+            {availableTerminals.length > 1 && (
+              <button
+                type="button"
+                title="Open in another terminal…"
+                aria-haspopup="menu"
+                aria-expanded={terminalMenuOpen}
+                onClick={() => setTerminalMenuOpen((open) => !open)}
+                disabled={poppingOut}
+                className="flex h-6 items-center rounded-r-md border border-border px-1 text-xs text-ink-muted transition-colors duration-100 hover:border-accent/50 hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <EllipsisIcon />
+              </button>
+            )}
+            {terminalMenuOpen && (
+              <>
+                {/* Click-away layer */}
+                <div className="fixed inset-0 z-40" onClick={() => setTerminalMenuOpen(false)} />
+                <div
+                  role="menu"
+                  className="absolute top-7 right-0 z-50 min-w-32 rounded-md border border-border bg-surface py-1 shadow-lg"
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setTerminalMenuOpen(false);
+                  }}
+                >
+                  {availableTerminals.map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => handlePopOut(key)}
+                      className="flex w-full items-center px-3 py-1.5 text-left text-xs text-ink-muted transition-colors duration-100 hover:bg-app-bg hover:text-accent"
+                    >
+                      {terminalLabel(key)}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         )}
         {status !== "dormant" && !isPoppedOut && (
           <button
@@ -262,7 +311,7 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
             role="alert"
             className="absolute inset-x-2 top-2 rounded-md border border-needs-you/40 bg-surface px-3 py-2 text-xs text-needs-you"
           >
-            Couldn't pop out to Ghostty: {popOutError}
+            Couldn't pop out: {popOutError}
           </div>
         )}
         {bringBackError && (
@@ -308,6 +357,16 @@ function PopOutIcon() {
     >
       <path d="M6 3H3.5a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5V10" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M9 3h4v4M13 3 7 9" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function EllipsisIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 fill-current" aria-hidden="true">
+      <circle cx="4" cy="8" r="1.2" />
+      <circle cx="8" cy="8" r="1.2" />
+      <circle cx="12" cy="8" r="1.2" />
     </svg>
   );
 }

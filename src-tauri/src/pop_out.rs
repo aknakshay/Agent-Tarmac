@@ -55,18 +55,53 @@ impl ExternalSessions {
     }
 }
 
-/// Which app ended up hosting the popped-out session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum PopOutApp {
-    Ghostty,
-    Terminal,
-}
-
+/// Which app ended up hosting the popped-out session — one of the keys in
+/// [`TERMINAL_KEYS`] (plus `"terminal"` for Terminal.app). A plain string so
+/// the frontend's label map is the single place that knows display names.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PopOutResult {
-    pub app: PopOutApp,
+    pub app: String,
+}
+
+/// Supported third-party terminals as `(key, .app bundle name)`. Terminal.app
+/// is not listed — it ships with macOS and is always offered as the floor.
+pub const TERMINAL_KEYS: &[(&str, &str)] = &[
+    ("ghostty", "Ghostty"),
+    ("iterm", "iTerm"),
+    ("wezterm", "WezTerm"),
+    ("kitty", "kitty"),
+    ("alacritty", "Alacritty"),
+];
+
+/// Returns the keys of installed terminals, in [`TERMINAL_KEYS`] priority
+/// order, with `"terminal"` (always present on macOS) appended last. The
+/// existence probe is injected so the ordering logic is testable without a
+/// filesystem.
+pub fn detect_installed_terminals(app_exists: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut found: Vec<String> = TERMINAL_KEYS
+        .iter()
+        .filter(|(_, bundle)| app_exists(bundle))
+        .map(|(key, _)| (*key).to_string())
+        .collect();
+    found.push("terminal".to_string());
+    found
+}
+
+/// True if `<name>.app` exists in /Applications or ~/Applications.
+fn macos_app_exists(bundle: &str) -> bool {
+    if Path::new(&format!("/Applications/{bundle}.app")).exists() {
+        return true;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return Path::new(&format!("{home}/Applications/{bundle}.app")).exists();
+    }
+    false
+}
+
+#[tauri::command]
+pub fn detect_terminals() -> Vec<String> {
+    detect_installed_terminals(macos_app_exists)
 }
 
 /// Escapes `s` for embedding inside single quotes in a POSIX shell command:
@@ -166,6 +201,70 @@ fn terminal_invocation(script_path: &str) -> Invocation {
     )
 }
 
+/// iTerm2's `write text` — like Terminal's `do script` — hands the string to
+/// a shell, so it gets the same two-layer escaping as `terminal_invocation`.
+fn iterm_invocation(script_path: &str) -> Invocation {
+    let shell_quoted = format!("'{}'", shell_single_quote_escape(script_path));
+    let escaped = applescript_string_escape(&shell_quoted);
+    Invocation::new(
+        "osascript",
+        vec![
+            "-e".into(),
+            "tell application \"iTerm\" to create window with default profile".into(),
+            "-e".into(),
+            format!(
+                "tell current session of current window of application \"iTerm\" to write text \"{escaped}\""
+            ),
+            "-e".into(),
+            "tell application \"iTerm\" to activate".into(),
+        ],
+    )
+}
+
+/// Builds the launch invocation for a specific terminal key (see
+/// [`TERMINAL_KEYS`] + `"terminal"`). The `open -na <App> --args ...` forms
+/// pass the script path as a plain argv element (no shell layer), so they
+/// need no extra escaping; the two AppleScript-based terminals get the
+/// two-layer treatment inside their builders.
+pub fn invocation_for(terminal: &str, script_path: &str) -> Result<Invocation, String> {
+    match terminal {
+        "ghostty" => Ok(ghostty_invocation(script_path)),
+        "terminal" => Ok(terminal_invocation(script_path)),
+        "iterm" => Ok(iterm_invocation(script_path)),
+        "wezterm" => Ok(Invocation::new(
+            "open",
+            vec![
+                "-na".into(),
+                "WezTerm".into(),
+                "--args".into(),
+                "start".into(),
+                "--".into(),
+                script_path.into(),
+            ],
+        )),
+        "kitty" => Ok(Invocation::new(
+            "open",
+            vec![
+                "-na".into(),
+                "kitty".into(),
+                "--args".into(),
+                script_path.into(),
+            ],
+        )),
+        "alacritty" => Ok(Invocation::new(
+            "open",
+            vec![
+                "-na".into(),
+                "Alacritty".into(),
+                "--args".into(),
+                "-e".into(),
+                script_path.into(),
+            ],
+        )),
+        other => Err(format!("unsupported terminal: {other}")),
+    }
+}
+
 /// Runs `invocation` and reports whether it succeeded (spawned and exited
 /// with a success status). Separated from the invocation-building logic
 /// above so tests can build+assert on invocations without ever calling this.
@@ -192,14 +291,14 @@ fn run(invocation: &Invocation) -> Result<(), String> {
 fn launch_via(
     script_path: &str,
     mut launch: impl FnMut(&Invocation) -> Result<(), String>,
-) -> Result<PopOutApp, String> {
+) -> Result<String, String> {
     let ghostty = ghostty_invocation(script_path);
     if launch(&ghostty).is_ok() {
-        return Ok(PopOutApp::Ghostty);
+        return Ok("ghostty".to_string());
     }
 
     let terminal = terminal_invocation(script_path);
-    launch(&terminal).map(|()| PopOutApp::Terminal)
+    launch(&terminal).map(|()| "terminal".to_string())
 }
 
 /// Outlasts PtyManager::kill's 5s SIGKILL escalation, so a stubborn process
@@ -295,6 +394,7 @@ pub fn pop_out_to_ghostty(
     workspace: State<WorkspaceState>,
     external: State<ExternalSessions>,
     session_id: String,
+    terminal: Option<String>,
 ) -> Result<PopOutResult, String> {
     validate_session_id(&session_id)?;
 
@@ -336,7 +436,17 @@ pub fn pop_out_to_ghostty(
     let script_path = write_script(&pop_out_dir, &session_id, &script_contents)?;
     let script_path_str = script_path.to_string_lossy().to_string();
 
-    let app_used = launch_via(&script_path_str, run)?;
+    // An explicitly chosen terminal launches exactly that terminal (no
+    // fallback — a user who picked WezTerm should get an error, not
+    // Terminal.app). No choice keeps the historical Ghostty→Terminal chain.
+    let app_used = match terminal.as_deref() {
+        Some(key) => {
+            let invocation = invocation_for(key, &script_path_str)?;
+            run(&invocation)?;
+            key.to_string()
+        }
+        None => launch_via(&script_path_str, run)?,
+    };
 
     external.insert(&session_id);
 
@@ -517,7 +627,7 @@ mod tests {
             calls.push(inv.clone());
             Ok(())
         });
-        assert_eq!(result, Ok(PopOutApp::Ghostty));
+        assert_eq!(result, Ok("ghostty".to_string()));
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].program, "open");
     }
@@ -534,10 +644,64 @@ mod tests {
                 Ok(())
             }
         });
-        assert_eq!(result, Ok(PopOutApp::Terminal));
+        assert_eq!(result, Ok("terminal".to_string()));
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].program, "open");
         assert_eq!(calls[1].program, "osascript");
+    }
+
+    #[test]
+    fn detect_installed_terminals_orders_and_always_includes_terminal() {
+        // Only kitty + Ghostty "installed": priority order preserved,
+        // Terminal.app appended last unconditionally.
+        let found = detect_installed_terminals(|b| b == "kitty" || b == "Ghostty");
+        assert_eq!(found, vec!["ghostty", "kitty", "terminal"]);
+
+        // Nothing installed: Terminal.app is still the floor.
+        let none = detect_installed_terminals(|_| false);
+        assert_eq!(none, vec!["terminal"]);
+    }
+
+    #[test]
+    fn invocation_for_covers_every_supported_key() {
+        for (key, _) in TERMINAL_KEYS {
+            assert!(invocation_for(key, "/tmp/s.sh").is_ok(), "key {key}");
+        }
+        assert!(invocation_for("terminal", "/tmp/s.sh").is_ok());
+        assert!(invocation_for("emacs-shell", "/tmp/s.sh").is_err());
+    }
+
+    #[test]
+    fn wezterm_and_kitty_pass_script_as_plain_argv() {
+        // `open --args` forms carry the path as an argv element — no shell
+        // layer, so a hostile-looking path must appear verbatim, unescaped.
+        let hostile = "/tmp/it's a `dir`/s.sh";
+        let wez = invocation_for("wezterm", hostile).unwrap();
+        assert_eq!(wez.program, "open");
+        assert_eq!(wez.args.last().unwrap(), hostile);
+        let kitty = invocation_for("kitty", hostile).unwrap();
+        assert_eq!(kitty.args.last().unwrap(), hostile);
+    }
+
+    #[test]
+    fn iterm_invocation_stays_inert_for_a_path_with_spaces_and_quotes() {
+        // Same double-layer contract as terminal_invocation: shell-quoted
+        // innermost, then AppleScript-escaped.
+        let inv = invocation_for("iterm", "/tmp/it's a `dir`/s.sh").unwrap();
+        assert_eq!(inv.program, "osascript");
+        let write_text = inv
+            .args
+            .iter()
+            .find(|a| a.contains("write text"))
+            .expect("write text arg present");
+        assert!(
+            write_text.contains("'\\\"'\\\"'"),
+            "single-quote escape survives both layers: {write_text}"
+        );
+        assert!(
+            !write_text.contains("write text \"/tmp"),
+            "path must not be bare in the shell layer"
+        );
     }
 
     #[test]

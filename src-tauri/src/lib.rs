@@ -60,6 +60,7 @@ pub fn run() {
             pty_manager::resize_pty,
             pop_out::pop_out_to_ghostty,
             pop_out::bring_back_session,
+            pop_out::detect_terminals,
         ])
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());
