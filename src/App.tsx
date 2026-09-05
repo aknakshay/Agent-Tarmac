@@ -110,6 +110,12 @@ function App() {
       .then(hydrateMeta)
       .catch((err) => console.error("Failed to load sessions", err));
 
+    // One-time probe for installed terminals (Ghostty, iTerm2, ...) so the
+    // pop-out control can offer real choices and label itself truthfully.
+    invoke<string[]>("detect_terminals")
+      .then((terminals) => useDeck.getState().setAvailableTerminals(terminals))
+      .catch((err) => console.error("detect_terminals failed", err));
+
     // Keep the listen() promises themselves rather than a `let fn` captured by a
     // later .then(); under StrictMode's dev-only mount->cleanup->remount, cleanup
     // can run before the promise resolves, which would otherwise leak a listener.
