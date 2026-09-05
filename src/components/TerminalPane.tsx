@@ -293,7 +293,7 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
             switch: --watermark-opacity in index.css. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute right-3 bottom-3 h-9 w-9 text-ink-faint"
+          className="pointer-events-none absolute right-3 bottom-3 h-14 w-14 text-ink"
           style={{ opacity: "var(--watermark-opacity)" }}
         >
           <Logo className="h-full w-full" />
