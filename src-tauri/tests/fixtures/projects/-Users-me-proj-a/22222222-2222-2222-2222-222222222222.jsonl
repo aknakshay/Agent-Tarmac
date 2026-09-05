@@ -1,0 +1,2 @@
+{"type":"user","cwd":"/Users/me/proj-a","sessionId":"22222222-2222-2222-2222-222222222222","timestamp":"2026-09-05T10:00:00Z","message":{"role":"user","content":"hello"}}
+{"type":"assistant","timestamp":"2026-09-05T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}

@@ -1,0 +1,4 @@
+{"type":"summary","summary":"Fix events cold start","leafUuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+{"type":"user","cwd":"/Users/me/proj-a","sessionId":"11111111-1111-1111-1111-111111111111","timestamp":"2026-09-05T10:00:00Z","message":{"role":"user","content":"hello"}}
+not json
+{"type":"assistant","timestamp":"2026-09-05T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}
