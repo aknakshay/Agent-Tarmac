@@ -19,7 +19,12 @@ function byLastActivityDesc(a: Session, b: Session): number {
   return new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime();
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  onOpenCommandBar(): void;
+  onOpenNewSession(): void;
+}
+
+export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const sessions = useDeck((state) => state.sessions);
   const activeId = useDeck((state) => state.activeId);
   const focus = useDeck((state) => state.focus);
@@ -86,8 +91,26 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-surface">
-      <div className="flex h-11 shrink-0 items-center border-b border-border px-3">
-        <span className="text-sm font-semibold text-ink">Claude Deck</span>
+      <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
+        <span className="flex-1 text-sm font-semibold text-ink">Claude Deck</span>
+        <button
+          type="button"
+          onClick={onOpenCommandBar}
+          aria-label="Jump to session"
+          title="Jump to session (⌘K)"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint hover:bg-surface-hover hover:text-ink-muted"
+        >
+          <SearchIcon />
+        </button>
+        <button
+          type="button"
+          onClick={onOpenNewSession}
+          aria-label="New session"
+          title="New session (⌘N)"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint hover:bg-surface-hover hover:text-ink-muted"
+        >
+          <PlusIcon />
+        </button>
       </div>
 
       {all.length === 0 ? (
@@ -143,6 +166,37 @@ export function Sidebar() {
         </div>
       )}
     </aside>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 fill-none stroke-current"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="7" cy="7" r="5" />
+      <path d="M11 11l3.5 3.5" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 fill-none stroke-current"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M8 3v10M3 8h10" />
+    </svg>
   );
 }
 

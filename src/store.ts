@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Session, SessionMeta, Status } from "./types";
+import { basename } from "./lib/paths";
 
 interface DeckState {
   sessions: Record<string, Session>;
@@ -9,8 +10,13 @@ interface DeckState {
   setSessions(metas: SessionMeta[]): void;
   /** Sets a session's status. Sets badge=true if the session becomes needsYou while unfocused. */
   setStatus(id: string, status: Status): void;
-  /** Focuses a session: clears its badge and ensures its pane is open. */
-  focus(id: string): void;
+  /**
+   * Focuses a session: clears its badge and ensures its pane is open. If `id`
+   * isn't in the index yet (e.g. the placeholder id `start_new_session`
+   * returns before the watcher picks up the real transcript), synthesizes a
+   * stub session from `cwd` so the pane has a header to render immediately.
+   */
+  focus(id: string, cwd?: string | null): void;
   closePane(id: string): void;
 }
 
@@ -46,14 +52,24 @@ export const useDeck = create<DeckState>()((set, get) => ({
     });
   },
 
-  focus: (id) => {
+  focus: (id, cwd = null) => {
     set((state) => {
-      const session = state.sessions[id];
-      if (!session) return state;
+      const existing = state.sessions[id];
+      const session: Session = existing
+        ? { ...existing, badge: false }
+        : {
+            id,
+            cwd,
+            title: basename(cwd),
+            lastActivity: new Date().toISOString(),
+            status: "working",
+            favorite: false,
+            badge: false,
+          };
       return {
         activeId: id,
         openIds: state.openIds.includes(id) ? state.openIds : [...state.openIds, id],
-        sessions: { ...state.sessions, [id]: { ...session, badge: false } },
+        sessions: { ...state.sessions, [id]: session },
       };
     });
   },

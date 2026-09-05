@@ -19,4 +19,30 @@ describe("useDeck", () => {
     expect(s.activeId).toBe("a");
     expect(s.openIds).toContain("a");
   });
+
+  it("focus on an unknown id synthesizes a stub session so the pane can render", () => {
+    useDeck.getState().focus("new-123", "/Users/me/proj-a");
+    const s = useDeck.getState();
+    expect(s.sessions["new-123"]).toMatchObject({
+      id: "new-123",
+      cwd: "/Users/me/proj-a",
+      title: "proj-a",
+      status: "working",
+      favorite: false,
+      badge: false,
+    });
+    expect(s.activeId).toBe("new-123");
+    expect(s.openIds).toContain("new-123");
+  });
+
+  it("focus on an unknown id without a cwd still synthesizes a stub", () => {
+    useDeck.getState().focus("new-456");
+    const s = useDeck.getState();
+    expect(s.sessions["new-456"]).toMatchObject({
+      id: "new-456",
+      cwd: null,
+      status: "working",
+    });
+    expect(s.activeId).toBe("new-456");
+  });
 });

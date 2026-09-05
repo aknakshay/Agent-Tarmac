@@ -81,6 +81,14 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
   const title = session?.title || "Untitled session";
   const project = basename(session?.cwd ?? null);
   const status = session?.status ?? "dormant";
+  const [stopping, setStopping] = useState(false);
+
+  const handleStop = () => {
+    setStopping(true);
+    invoke("stop_session", { sessionId })
+      .catch((err) => console.error(`stop_session failed for session ${sessionId}`, err))
+      .finally(() => setStopping(false));
+  };
 
   return (
     <div
@@ -94,6 +102,17 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
           ·
         </span>
         <span className="truncate text-xs text-ink-faint">{project}</span>
+        {status !== "dormant" && (
+          <button
+            type="button"
+            onClick={handleStop}
+            disabled={stopping}
+            className="ml-auto flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-xs font-medium text-ink-muted transition-colors duration-100 hover:border-needs-you/50 hover:text-needs-you disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <StopIcon />
+            Stop
+          </button>
+        )}
       </header>
       <div className="relative min-h-0 flex-1">
         <div ref={containerRef} className="h-full w-full px-2 py-1" />
@@ -107,5 +126,17 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
         )}
       </div>
     </div>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3 w-3 shrink-0 fill-current"
+      aria-hidden="true"
+    >
+      <rect x="4" y="4" width="8" height="8" rx="1.5" />
+    </svg>
   );
 }
