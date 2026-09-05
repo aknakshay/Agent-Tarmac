@@ -32,6 +32,7 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const sessions = useDeck((state) => state.sessions);
   const activeId = useDeck((state) => state.activeId);
   const focus = useDeck((state) => state.focus);
+  const goHome = useDeck((state) => state.goHome);
   const setCustomTitle = useDeck((state) => state.setCustomTitle);
   const setProjectName = useDeck((state) => state.setProjectName);
   const projectNames = useDeck((state) => state.projectNames);
@@ -133,8 +134,16 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   return (
     <aside className="flex h-full min-h-0 w-[280px] shrink-0 flex-col border-r border-border bg-surface">
       <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border px-3">
-        <Logo className="h-4 w-4 shrink-0 text-ink" />
-        <span className="flex-1 text-sm font-semibold text-ink">Agent Tarmac</span>
+        <button
+          type="button"
+          onClick={goHome}
+          aria-label="Home"
+          title="Home (⌘0)"
+          className="-mx-1 flex flex-1 items-center gap-1.5 rounded-md px-1 py-1 text-left hover:bg-surface-hover"
+        >
+          <Logo className="h-4 w-4 shrink-0 text-ink" />
+          <span className="flex-1 text-sm font-semibold text-ink">Agent Tarmac</span>
+        </button>
         <button
           type="button"
           onClick={onOpenCommandBar}

@@ -104,6 +104,36 @@ describe("useDeck", () => {
     expect(useDeck.getState().sessions["orphan"]).toBeUndefined();
   });
 
+  describe("goHome", () => {
+    it("clears activeId without closing the open pane", () => {
+      useDeck.setState({
+        sessions: { a: { id: "a", ...baseSession } },
+        activeId: "a",
+        openIds: ["a"],
+      });
+      useDeck.getState().goHome();
+      const s = useDeck.getState();
+      expect(s.activeId).toBeNull();
+      expect(s.openIds).toContain("a");
+    });
+
+    it("stamps lastSeenAt on the session being left", () => {
+      useDeck.setState({
+        sessions: { a: { id: "a", ...baseSession } },
+        activeId: "a",
+        openIds: ["a"],
+      });
+      useDeck.getState().goHome();
+      expect(useDeck.getState().sessions["a"].lastSeenAt).not.toBeNull();
+    });
+
+    it("is a no-op when already home", () => {
+      useDeck.setState({ sessions: {}, activeId: null, openIds: [] });
+      useDeck.getState().goHome();
+      expect(useDeck.getState().activeId).toBeNull();
+    });
+  });
+
   describe("read/unread", () => {
     it("focus stamps lastSeenAt and clears markedUnread", () => {
       useDeck.setState({

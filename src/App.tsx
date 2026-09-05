@@ -28,6 +28,7 @@ function App() {
   const openIds = useDeck((state) => state.openIds);
   const activeId = useDeck((state) => state.activeId);
   const focus = useDeck((state) => state.focus);
+  const goHome = useDeck((state) => state.goHome);
   const hydrateMeta = useDeck((state) => state.hydrateMeta);
   const toggleMarkedUnread = useDeck((state) => state.toggleMarkedUnread);
 
@@ -85,6 +86,12 @@ function App() {
         return;
       }
 
+      if (e.key === "0") {
+        e.preventDefault();
+        goHome();
+        return;
+      }
+
       if (e.key >= "1" && e.key <= "9") {
         const index = Number(e.key) - 1;
         const id = openIds[index];
@@ -97,7 +104,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [commandBarOpen, newSessionOpen, openIds, focus, activeId, toggleMarkedUnread]);
+  }, [commandBarOpen, newSessionOpen, openIds, focus, goHome, activeId, toggleMarkedUnread]);
 
   useEffect(() => {
     invoke<SessionMeta[]>("list_sessions")

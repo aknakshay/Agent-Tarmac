@@ -89,6 +89,13 @@ interface DeckState {
    * session, and stamps `lastSeenAt` on the session being switched away from.
    */
   focus(id: string, cwd?: string | null): void;
+  /**
+   * Returns to Home without closing any open pane — `openIds` is untouched,
+   * so every session stays alive and reachable from the sidebar. Stamps
+   * `lastSeenAt` on the session being left, same as switching to another
+   * session via `focus`.
+   */
+  goHome(): void;
   /** Merges persisted `session_meta`/`favorites`/`project_meta` from `workspace.json` into known sessions. */
   hydrateMeta(ws: Workspace): void;
   /** Sets the explicit unread flag. Persists (debounced). */
@@ -221,6 +228,22 @@ export const useDeck = create<DeckState>()((set, get) => ({
 
     if (prevActiveId && prevActiveId !== id) scheduleMetaPersist(prevActiveId, get);
     scheduleMetaPersist(id, get);
+  },
+
+  goHome: () => {
+    const prevActiveId = get().activeId;
+    if (prevActiveId === null) return;
+
+    set((state) => {
+      const existing = state.sessions[prevActiveId];
+      if (!existing) return { activeId: null };
+      return {
+        activeId: null,
+        sessions: { ...state.sessions, [prevActiveId]: { ...existing, lastSeenAt: new Date().toISOString() } },
+      };
+    });
+
+    scheduleMetaPersist(prevActiveId, get);
   },
 
   hydrateMeta: (ws) => {
