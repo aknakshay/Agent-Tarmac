@@ -1,0 +1,229 @@
+/*
+  SplashScreen — the app's launch takeoff. Fills the viewport with the
+  dark brand ground; a large delta-wing dart spools, ignites, and climbs
+  out the top while the runway centerline streams past beneath.
+
+  All motion is transform/opacity (GPU-friendly). Timings are mirrored in
+  SplashScreen.tsx (LAUNCH_MS <-> --splash-launch-ms). The reduced-motion
+  branch (both [data-reduced] and the media query) holds a still lit jet.
+*/
+
+.splash {
+  --splash-launch-ms: 1800ms;
+  --splash-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  position: fixed;
+  inset: 0;
+  z-index: 50; /* full-screen launch overlay, above the app shell */
+  overflow: hidden;
+  background:
+    radial-gradient(
+      120% 90% at 50% 12%,
+      var(--color-surface),
+      var(--color-app-bg) 62%
+    ),
+    var(--color-app-bg);
+}
+
+/* ---- Runway: a plane laid back into the screen, receding upward to a
+   vanishing point so the dart climbs "into the distance" out the top. */
+.splash__runway {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: min(72vw, 520px);
+  height: 80vh;
+  transform: translateX(-50%);
+  perspective: 620px;
+  perspective-origin: 50% 0%;
+  pointer-events: none;
+}
+
+.splash__runway::before {
+  /* The tarmac surface, whose own edges converge to the horizon. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: rotateX(66deg);
+  transform-origin: 50% 100%;
+  border-left: 1px solid color-mix(in oklab, var(--color-accent) 40%, transparent);
+  border-right: 1px solid color-mix(in oklab, var(--color-accent) 40%, transparent);
+  -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, 0.9) 30%, transparent 92%);
+  mask-image: linear-gradient(to top, rgba(0, 0, 0, 0.9) 30%, transparent 92%);
+}
+
+.splash__stripes {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 12px;
+  height: 100%;
+  transform: translateX(-50%) rotateX(66deg);
+  transform-origin: 50% 100%;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--color-ink-faint) 0 22px,
+    transparent 22px 64px
+  );
+  opacity: 0.75;
+  -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 26%, transparent 88%);
+  mask-image: linear-gradient(to top, rgba(0, 0, 0, 1) 26%, transparent 88%);
+  animation: splash-stream 0.5s linear infinite;
+}
+
+/* ---- Stage: the dart + the wordmark, centered. ---------------------- */
+.splash__stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.splash__jet {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: clamp(104px, 16vw, 172px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  animation: splash-launch var(--splash-launch-ms) var(--splash-ease) forwards;
+  filter: drop-shadow(0 14px 26px rgba(0, 0, 0, 0.55));
+}
+
+.splash__mark {
+  width: 100%;
+  height: 100%;
+}
+
+/* Afterburner: off, ignite, sustained burn, then streaked in the climb. */
+.splash__mark .jetmark__flame {
+  animation: splash-flame var(--splash-launch-ms) var(--splash-ease) forwards;
+}
+
+.splash__wordmark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: clamp(48px, 12vh, 120px);
+  margin: 0;
+  text-align: center;
+  font-size: clamp(1rem, 2.4vw, 1.4rem);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  animation: splash-word var(--splash-launch-ms) ease-in-out forwards;
+}
+
+/* ---- Keyframes ------------------------------------------------------ */
+
+@keyframes splash-stream {
+  from {
+    transform: translateX(-50%) rotateX(66deg) translateY(0);
+  }
+  to {
+    /* One dash tile = 64px along the receding plane. */
+    transform: translateX(-50%) rotateX(66deg) translateY(64px);
+  }
+}
+
+@keyframes splash-launch {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  12% {
+    /* Spool: a small settle on the brakes. */
+    transform: translate(-50%, calc(-50% + 2px)) scale(1);
+  }
+  26% {
+    transform: translate(-50%, calc(-50% - 6px)) scale(1.02);
+  }
+  46% {
+    /* Rotate: nose committed, starting the climb. */
+    transform: translate(-50%, calc(-50% - 9vh)) scale(1.03);
+  }
+  100% {
+    /* Climb out the top, shrinking into the distance. */
+    transform: translate(-50%, -128vh) scale(0.68);
+    opacity: 0.85;
+  }
+}
+
+@keyframes splash-flame {
+  0%,
+  8% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  16% {
+    transform: scaleY(0.4);
+    opacity: 0.6;
+  }
+  30% {
+    transform: scaleY(1.1);
+    opacity: 1;
+  }
+  46% {
+    transform: scaleY(1.25);
+    opacity: 1;
+  }
+  100% {
+    /* Stretched to a streak as the aircraft accelerates away. */
+    transform: scaleY(2.8);
+    opacity: 0.9;
+  }
+}
+
+@keyframes splash-word {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  22%,
+  62% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+}
+
+/* ---- Reduced motion: still, lit jet; no takeoff, no stream. --------- */
+.splash[data-reduced="true"] .splash__jet,
+.splash[data-reduced="true"] .splash__mark .jetmark__flame,
+.splash[data-reduced="true"] .splash__stripes,
+.splash[data-reduced="true"] .splash__wordmark {
+  animation: none !important;
+}
+.splash[data-reduced="true"] .splash__jet {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+}
+.splash[data-reduced="true"] .splash__mark .jetmark__flame {
+  transform: scaleY(1);
+  opacity: 0.9;
+}
+.splash[data-reduced="true"] .splash__wordmark {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash__jet,
+  .splash__mark .jetmark__flame,
+  .splash__stripes,
+  .splash__wordmark {
+    animation: none !important;
+  }
+  .splash__jet {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  .splash__mark .jetmark__flame {
+    transform: scaleY(1);
+    opacity: 0.9;
+  }
+  .splash__wordmark {
+    opacity: 1;
+  }
+}

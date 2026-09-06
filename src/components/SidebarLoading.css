@@ -1,183 +1,149 @@
 /*
-  SidebarLoading — motion styles for the jet-launch loading state.
+  SidebarLoading — the launch continued, sized for the ~280px session
+  column. The shared dart (jetMark.tsx) climbs in place while the runway
+  centerline and thin cloud wisps stream DOWN past it (vertical motion
+  suits the narrow column) with the afterburner lit, looping.
 
-  Co-located with SidebarLoading.tsx. Self-contained: reads the app's
-  design tokens (the Tailwind v4 `@theme` custom properties in index.css:
-  --color-*), never hardcodes palette values except the afterburner flame,
-  whose two-stop red->yellow ramp matches JetIcon.tsx exactly (the app's
-  established afterburner treatment) and lives in --jl-flame-* below.
-
-  The scene is a foreshortened runway (a rectangle laid flat in 3D, whose
-  edges converge toward the horizon for free under perspective) with a
-  streaming dashed centerline, and a delta-wing dart — the brand mark from
-  assets/brand/logo.svg — taxiing on it. When `phase` flips to "done" the
-  dart climbs out and the scene fades; the parent unmounts after ~600ms.
-
-  All motion is transform/opacity only (GPU-friendly) and every animation
-  has a reduced-motion resting state at the bottom of this file.
+  Transform/opacity only. Reduced-motion resting frame at the bottom.
+  Palette is tokens-only; the flame colors live in jetMark.css.
 */
 
-.jl {
-  --jl-flame-hot: #ff5a3c;
-  --jl-flame-warm: #ffd166;
-  --jl-takeoff-ms: 620ms;
-  --jl-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-
+.jls {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.75rem;
-  padding: 1.25rem 1rem 1.5rem;
+  padding: 1.5rem 1rem 1.75rem;
   user-select: none;
 }
 
-/* ---- Runway scene ---------------------------------------------------- */
-
-.jl__viewport {
+/* ---- Sky: the vertical column the jet climbs through. --------------- */
+.jls__sky {
   position: relative;
   width: 100%;
-  max-width: 220px;
-  height: 116px;
-  /* Perspective lives on the parent of the rotated ground plane. */
-  perspective: 300px;
-  perspective-origin: 50% 34%;
-}
-
-/* The tarmac: a flat rectangle rotated back into the screen. Its own left
-   and right edges become the converging runway lights under perspective,
-   so no manual taper is needed. Masked to dissolve into the horizon. */
-.jl__ground {
-  position: absolute;
-  inset: 0;
-  transform: rotateX(64deg);
-  transform-origin: 50% 100%;
-  border-left: 1px solid var(--color-border);
-  border-right: 1px solid var(--color-border);
+  max-width: 180px;
+  height: 168px;
   overflow: hidden;
+  border-radius: 12px;
+  background: radial-gradient(
+    120% 70% at 50% 20%,
+    color-mix(in oklab, var(--color-accent) 12%, transparent),
+    transparent 68%
+  );
+  /* Fade the top and bottom edges so streaming elements enter/leave
+     softly rather than popping at a hard border. */
   -webkit-mask-image: linear-gradient(
-    to top,
-    rgba(0, 0, 0, 0.95) 42%,
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 1) 14%,
+    rgba(0, 0, 0, 1) 82%,
     transparent 100%
   );
   mask-image: linear-gradient(
-    to top,
-    rgba(0, 0, 0, 0.95) 42%,
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 1) 14%,
+    rgba(0, 0, 0, 1) 82%,
     transparent 100%
   );
 }
 
-/* Dashed centerline. A tall strip of repeating dashes translated toward
-   the near edge (downward) to read as forward motion; perspective on the
-   parent makes near dashes larger and faster, far ones small and slow. */
-.jl__stripes {
+/* Centerline dashes, streaming down = the jet is climbing up past them. */
+.jls__stripes {
   position: absolute;
   left: 50%;
-  top: -60px;
-  width: 8px;
-  height: calc(100% + 120px);
+  top: -40px;
+  width: 6px;
+  height: calc(100% + 80px);
   transform: translateX(-50%) translateY(0);
   background: repeating-linear-gradient(
     to bottom,
-    var(--color-ink-faint) 0 13px,
-    transparent 13px 40px
+    var(--color-ink-faint) 0 12px,
+    transparent 12px 40px
   );
-  opacity: 0.7;
-  animation: jl-stream 1.15s linear infinite;
+  opacity: 0.55;
+  animation: jls-fall 0.9s linear infinite;
 }
 
-/* A quiet accent wash on the near tarmac — the "active frequency" tint
-   from the runway-light motif, kept low so it reads as atmosphere. */
-.jl__ground::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    120% 80% at 50% 100%,
-    color-mix(in oklab, var(--color-accent) 22%, transparent),
-    transparent 70%
-  );
-  pointer-events: none;
-}
-
-/* ---- The dart ------------------------------------------------------- */
-
-.jl__jet {
+/* Thin cloud wisps drifting down at three offsets/speeds for parallax. */
+.jls__wisp {
   position: absolute;
   left: 50%;
-  bottom: 30px;
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--color-ink-faint);
+  opacity: 0.18;
+  filter: blur(1px);
+}
+.jls__wisp--a {
   width: 46px;
-  height: 46px;
+  transform: translateX(-130%);
+  animation: jls-fall-wisp 2.6s linear infinite;
+}
+.jls__wisp--b {
+  width: 30px;
+  transform: translateX(70%);
+  animation: jls-fall-wisp 3.6s linear infinite 0.8s;
+}
+.jls__wisp--c {
+  width: 38px;
   transform: translateX(-50%);
-  /* z above the ground plane's stacking context. */
-  will-change: transform;
+  animation: jls-fall-wisp 4.4s linear infinite 1.9s;
 }
 
-/* Inner wrapper carries the looping taxi bob so the outer element keeps
-   the static horizontal centering (transforms don't compose otherwise). */
-.jl__craft {
+/* ---- The dart, climbing. -------------------------------------------- */
+.jls__jet {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 74px;
+  height: 74px;
+  transform: translate(-50%, -50%);
+  animation: jls-climb 3s ease-in-out infinite;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.5));
+}
+.jls__mark {
   width: 100%;
   height: 100%;
-  transform-origin: 50% 60%;
-  animation: jl-taxi 2.4s ease-in-out infinite;
-  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5));
 }
-
-.jl__dart {
-  fill: var(--color-ink-muted);
-}
-.jl__tail {
-  fill: var(--color-accent);
-}
-
-.jl__flame {
-  transform-origin: 12px 17px;
-  animation: jl-flame 0.9s ease-in-out infinite;
+.jls__mark .jetmark__flame {
+  animation: jetmark-flicker 0.85s ease-in-out infinite;
 }
 
 /* ---- Caption -------------------------------------------------------- */
-
-.jl__caption {
+.jls__caption {
   margin: 0;
-  font-size: 0.75rem;
-  line-height: 1.2;
-  letter-spacing: 0.01em;
-  color: var(--color-ink-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  color: var(--color-ink);
   text-align: center;
 }
-
-.jl__count {
-  color: var(--color-ink-faint);
+.jls__count {
+  font-size: 0.75rem;
+  color: var(--color-ink-muted);
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- Takeoff (phase = "done") --------------------------------------- */
-
-/* The dart rotates the ground stream faster, climbs out toward the
-   horizon (up + shrink + fade), and the whole scene dissolves. */
-.jl[data-phase="done"] .jl__stripes {
-  animation-duration: 0.4s;
+/* ---- Done: settle the climb, resolve the caption. ------------------- */
+.jls[data-phase="done"] .jls__jet {
+  animation-duration: 6s;
 }
-
-.jl[data-phase="done"] .jl__craft {
-  animation: jl-takeoff var(--jl-takeoff-ms) var(--jl-ease-out) forwards;
+.jls[data-phase="done"] .jls__stripes {
+  animation-duration: 1.8s;
+  opacity: 0.32;
 }
-
-.jl[data-phase="done"] .jl__flame {
-  animation: jl-flare var(--jl-takeoff-ms) var(--jl-ease-out) forwards;
-}
-
-.jl[data-phase="done"] .jl__viewport {
-  animation: jl-scene-out var(--jl-takeoff-ms) var(--jl-ease-out) forwards;
-}
-
-.jl[data-phase="done"] .jl__caption {
-  color: var(--color-working);
-  transition: color 200ms ease-out;
+.jls[data-phase="done"] .jls__mark .jetmark__dart {
+  fill: var(--color-working);
+  transition: fill 260ms ease-out;
 }
 
 /* ---- Keyframes ------------------------------------------------------ */
 
-@keyframes jl-stream {
+@keyframes jls-fall {
   from {
     transform: translateX(-50%) translateY(0);
   }
@@ -187,110 +153,54 @@
   }
 }
 
-@keyframes jl-taxi {
-  0%,
-  100% {
-    transform: translateY(0) rotate(0deg);
+@keyframes jls-fall-wisp {
+  from {
+    top: -8px;
+    opacity: 0;
   }
-  25% {
-    transform: translateY(-1.5px) rotate(-0.6deg);
+  12% {
+    opacity: 0.2;
   }
-  60% {
-    transform: translateY(0.5px) rotate(0.5deg);
+  88% {
+    opacity: 0.2;
+  }
+  to {
+    top: 172px;
+    opacity: 0;
   }
 }
 
-@keyframes jl-flame {
+@keyframes jls-climb {
   0%,
   100% {
-    transform: scaleY(0.72) scaleX(0.94);
-    opacity: 0.55;
+    transform: translate(-50%, calc(-50% + 3px)) rotate(-0.8deg);
   }
   50% {
-    transform: scaleY(1.15) scaleX(1.02);
-    opacity: 1;
+    transform: translate(-50%, calc(-50% - 3px)) rotate(0.8deg);
   }
 }
 
-@keyframes jl-takeoff {
-  0% {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-  }
-  35% {
-    transform: translateY(-14px) scale(1);
-    opacity: 1;
-  }
-  100% {
-    /* Climb out up the centerline, shrinking into the distance. */
-    transform: translateY(-92px) scale(0.5);
-    opacity: 0;
-  }
-}
-
-@keyframes jl-flare {
-  0% {
-    transform: scaleY(1);
-    opacity: 1;
-  }
-  40% {
-    /* Afterburner lights up for the roll. */
-    transform: scaleY(1.9) scaleX(1.15);
-    opacity: 1;
-  }
-  100% {
-    transform: scaleY(2.4) scaleX(0.6);
-    opacity: 0;
-  }
-}
-
-@keyframes jl-scene-out {
-  0%,
-  55% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-
-/* ---- Reduced motion ------------------------------------------------- */
-
-/*
-  Collapse to a still frame: a parked dart on a static dashed centerline,
-  caption unchanged. No streaming, no bob, no flame flicker, no climb-out.
-  The global reduced-motion override in index.css already freezes running
-  animations; these rules make the resting frame deliberate rather than
-  "whatever position the animation stopped at".
-*/
+/* ---- Reduced motion: static climbing jet, still sky. ---------------- */
 @media (prefers-reduced-motion: reduce) {
-  .jl__stripes,
-  .jl__craft,
-  .jl__flame,
-  .jl[data-phase="done"] .jl__stripes,
-  .jl[data-phase="done"] .jl__craft,
-  .jl[data-phase="done"] .jl__flame,
-  .jl[data-phase="done"] .jl__viewport {
+  .jls__stripes,
+  .jls__wisp,
+  .jls__jet,
+  .jls__mark .jetmark__flame,
+  .jls[data-phase="done"] .jls__jet,
+  .jls[data-phase="done"] .jls__stripes {
     animation: none !important;
   }
-  .jl__stripes {
+  .jls__stripes {
     transform: translateX(-50%) translateY(0);
-    opacity: 0.55;
   }
-  .jl__craft {
-    transform: none;
+  .jls__wisp {
+    display: none;
   }
-  .jl__flame {
-    transform: scaleY(0.85);
-    opacity: 0.7;
+  .jls__jet {
+    transform: translate(-50%, -50%);
   }
-  /* On "done", hold the dart visible but tinted "cleared" green rather
-     than replaying a climb-out the reader opted out of. */
-  .jl[data-phase="done"] .jl__dart {
-    fill: var(--color-working);
-    transition: fill 150ms linear;
-  }
-  .jl[data-phase="done"] .jl__viewport {
-    opacity: 1;
+  .jls__mark .jetmark__flame {
+    transform: scaleY(0.9);
+    opacity: 0.75;
   }
 }

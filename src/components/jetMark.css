@@ -1,0 +1,47 @@
+/*
+  Shared paint + a reusable afterburner flicker for the delta-wing dart
+  (jetMark.tsx). Consumers (SplashScreen, SidebarLoading) own all bulk
+  motion; this file provides the flame color ramp, base fills, and one
+  looping flicker keyframe both can apply to .jetmark__flame.
+
+  The flame colors are the app's afterburner treatment, identical to
+  JetIcon.tsx, and the ONLY hardcoded palette values here — everything
+  else reads the design tokens from index.css.
+*/
+
+.jetmark {
+  --jl-flame-hot: #ff5a3c;
+  --jl-flame-warm: #ffd166;
+  display: block;
+  /* The flame overshoots the 24x24 box during a climb; don't clip it. */
+  overflow: visible;
+}
+
+.jetmark__dart {
+  fill: var(--color-ink);
+}
+
+.jetmark__tail {
+  fill: var(--color-accent);
+}
+
+.jetmark__flame {
+  /* Scale from the nozzle (top-center of the flame's own box) so the
+     afterburner stretches downward, never from its middle. */
+  transform-box: fill-box;
+  transform-origin: 50% 0%;
+}
+
+/* Looping afterburner flicker — used by the sidebar loader's steady climb
+   and as the splash's sustained burn. */
+@keyframes jetmark-flicker {
+  0%,
+  100% {
+    transform: scaleY(0.74) scaleX(0.94);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scaleY(1.18) scaleX(1.02);
+    opacity: 1;
+  }
+}
