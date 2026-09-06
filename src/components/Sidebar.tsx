@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useDeck } from "../store";
 import type { Session } from "../types";
 import { SessionRow } from "./SessionRow";
+import { SidebarLoading } from "./SidebarLoading";
 import { SessionContextMenu } from "./SessionContextMenu";
 import { ProjectGroupContextMenu } from "./ProjectGroupContextMenu";
 import { displayProjectName } from "../lib/projectMeta";
@@ -30,6 +31,9 @@ interface SidebarProps {
 
 export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const sessions = useDeck((state) => state.sessions);
+  const sessionsLoaded = useDeck((state) => state.sessionsLoaded);
+  const scanning = useDeck((state) => state.scanning);
+  const scanCount = useDeck((state) => state.scanCount);
   const activeId = useDeck((state) => state.activeId);
   const focus = useDeck((state) => state.focus);
   const goHome = useDeck((state) => state.goHome);
@@ -134,6 +138,14 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
     return { groups, hiddenDormantCount };
   }, [visible, showHistory, activeTags, projectNames]);
 
+  // Show the climbing-jet loader while sessions are still coming aboard: the
+  // very first paint before any `sessions_updated` batch (!sessionsLoaded), or
+  // while the fresh reconcile is still running and nothing is on the board yet.
+  // Once any session is visible we swap to the real list even mid-scan; and a
+  // genuinely-empty machine (scan done, zero sessions) falls through to the
+  // empty state rather than looping forever, because both gates have cleared.
+  const showLoader = !sessionsLoaded || (scanning && visible.length === 0);
+
   const toggleGroup = (key: string) => {
     setCollapsedGroups((prev) => {
       const next = new Set(prev);
@@ -208,7 +220,11 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
         </div>
       )}
 
-      {visible.length === 0 ? (
+      {showLoader ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
+          <SidebarLoading phase="loading" count={scanCount ?? undefined} />
+        </div>
+      ) : visible.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <OnApproachIllustration className="h-28 w-40 opacity-90" />
           <p className="text-sm font-medium text-ink-muted">Tower's clear</p>

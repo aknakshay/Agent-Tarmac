@@ -76,6 +76,23 @@ interface DeckState {
   /** True once the first `list_sessions`/`sessions_updated` result has landed. */
   sessionsLoaded: boolean;
   /**
+   * Whether the background startup scan's fresh disk reconcile is in flight —
+   * true between the backend's `scan_started` and `scan_complete` events.
+   * Drives the sidebar's climbing-jet loader while sessions are still coming
+   * aboard; see `startScan`/`completeScan` and Sidebar.tsx.
+   */
+  scanning: boolean;
+  /**
+   * Session tally reported by the scan events for the loader's "N sessions
+   * inbound" line: the cached count on `scan_started`, then the reconciled
+   * count on `scan_complete`. Null until the first scan event lands.
+   */
+  scanCount: number | null;
+  /** Marks the reconcile scan as in flight (from `scan_started`). */
+  startScan(cachedCount: number): void;
+  /** Marks the reconcile scan as finished (from `scan_complete`). */
+  completeScan(count: number): void;
+  /**
    * Cached copy of the last-hydrated `session_meta`/`favorites`, used by
    * `setSessions` to seed a session's metadata the first time it appears
    * (e.g. a session that existed in `workspace.json` before the session
@@ -160,6 +177,8 @@ export const useDeck = create<DeckState>()((set, get) => ({
   openIds: [],
   activeId: null,
   sessionsLoaded: false,
+  scanning: false,
+  scanCount: null,
   metaCache: {},
   favoriteIdsCache: [],
   projectNames: {},
@@ -207,6 +226,9 @@ export const useDeck = create<DeckState>()((set, get) => ({
       scheduleMetaPersist(activeId, get);
     }
   },
+
+  startScan: (cachedCount) => set({ scanning: true, scanCount: cachedCount }),
+  completeScan: (count) => set({ scanning: false, scanCount: count }),
 
   availableTerminals: ["terminal"],
   setAvailableTerminals: (terminals) =>
