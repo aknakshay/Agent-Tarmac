@@ -200,32 +200,6 @@ fn is_codex_app_originator(originator: &str) -> bool {
     APP_MARKERS.iter().any(|m| lower.contains(m))
 }
 
-/// Whether the rollout at `path` is a ChatGPT-app surface (Desktop /
-/// extension), decided from a **bounded head read** — never the whole file.
-/// The `session_meta` record carries the `originator` and is always the first
-/// record, so the head window covers it. Used by token scanning to skip these
-/// (they carry no usage records and are hidden in the sidebar); an unreadable
-/// or originator-less head fails open to `false` (treated as a real session),
-/// matching [`is_codex_app_originator`]'s fail-open policy.
-pub fn is_app_surface(path: &Path) -> bool {
-    let Some(head) = crate::bounded_read::read_head(path) else {
-        return false;
-    };
-    for line in head.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if v.get("type").and_then(|t| t.as_str()) == Some("session_meta") {
-            let orig = v
-                .get("payload")
-                .and_then(|p| p.get("originator"))
-                .and_then(|x| x.as_str());
-            return orig.is_some_and(is_codex_app_originator);
-        }
-    }
-    false
-}
-
 /// Parse one Codex rollout file into a [`SessionMeta`] tagged
 /// [`BackendKind::Codex`], or `None` if the file is unreadable / has no
 /// identifiable session id.
@@ -779,17 +753,6 @@ mod tests {
         // prompt scrape — it's always present in the TUI, so matching it would
         // pin every running Codex session to NeedsYou.
         assert!(!tail_looks_like_prompt("› Ask Codex to do anything"));
-    }
-
-    #[test]
-    fn is_app_surface_flags_desktop_from_head_only() {
-        // The ChatGPT-Desktop rollout is an app surface (skipped by token
-        // scanning); the CLI-originated ones are not. Decided from the head.
-        assert!(is_app_surface(&fixture_desktop()));
-        assert!(!is_app_surface(&fixture_a()));
-        assert!(!is_app_surface(&fixture_b()));
-        // A missing file fails open to "not an app surface" (a real session).
-        assert!(!is_app_surface(Path::new("/nope/x.jsonl")));
     }
 
     #[test]

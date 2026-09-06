@@ -1,8 +1,8 @@
 use crate::backend::{self, SessionBackend};
-use crate::session_cache::{PersistentCache, SessionCacheState, TokenEntry};
+use crate::session_cache::{SessionCacheState, TokenEntry};
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Mutex;
@@ -86,12 +86,10 @@ pub fn record_timestamp(v: &serde_json::Value) -> Option<DateTime<Utc>> {
 pub fn compute_stats(backend: &dyn SessionBackend, root: &Path, today: NaiveDate) -> TokenStats {
     let mut stats = TokenStats::default();
     for file_path in backend.transcript_files(root) {
-        // Skip hidden app surfaces (ChatGPT-app Codex rollouts): they carry no
-        // usage and are all 27 GB on this machine. A cheap bounded head read
-        // classifies them; we never open the body.
-        if backend.is_hidden_usage_surface(&file_path) {
-            continue;
-        }
+        // Every session counts toward the lifetime token total, including
+        // hidden ChatGPT-app Codex rollouts (per the product decision): the
+        // tokenmaxxing number is the honest all-surfaces total, even though
+        // those sessions stay hidden in the sidebar list.
 
         // Transcripts are append-only, so a file whose mtime falls
         // before local midnight cannot contain any of today's
@@ -200,9 +198,10 @@ fn stream_usage_from(
     u
 }
 
-/// The fleet total, computed against the persisted per-file token cache. For
+/// The fleet total, computed against the persisted per-file token cache. Every
+/// transcript is summed — including hidden ChatGPT-app Codex rollouts, per the
+/// product decision that the lifetime total be honest across all surfaces. For
 /// each transcript:
-///   * hidden app surfaces are skipped (and any stale entry dropped);
 ///   * an unchanged `(mtime, size)` reuses cached totals with no read — today
 ///     buckets are honored only when they were computed for the same local
 ///     date, else they reset to zero;
@@ -212,18 +211,26 @@ fn stream_usage_from(
 ///
 /// Cache entries for vanished files are pruned. This is where the 27 GB stops
 /// being rescanned every 60 s.
-fn compute_stats_all_cached(cache: &mut PersistentCache, today: NaiveDate) -> TokenStats {
+///
+/// Operates on the token map ALONE (not the whole [`PersistentCache`]) so the
+/// caller can clone just that map and run this — a ~35 s cold read of every
+/// surface — WITHOUT holding the shared cache lock, keeping the session watcher
+/// and startup scan responsive meanwhile (see [`refresh_if_stale`]).
+fn compute_stats_all_cached(
+    tokens: &mut HashMap<String, TokenEntry>,
+    today: NaiveDate,
+) -> TokenStats {
     let roots = backend::all_backends()
         .iter()
         .map(|b| (*b, b.transcripts_root()));
-    compute_over_cached(cache, roots, today)
+    compute_over_cached(tokens, roots, today)
 }
 
 /// The cache-aware summation core, taking explicit `(backend, root)` pairs so
 /// it is unit-testable against fixture roots without mutating the process-wide
 /// `AGENT_TARMAC_*_DIR` env vars that other tests read in parallel.
 fn compute_over_cached<'a>(
-    cache: &mut PersistentCache,
+    tokens: &mut HashMap<String, TokenEntry>,
     roots: impl Iterator<Item = (&'a dyn SessionBackend, std::path::PathBuf)>,
     today: NaiveDate,
 ) -> TokenStats {
@@ -232,16 +239,12 @@ fn compute_over_cached<'a>(
     for (b, root) in roots {
         for path in b.transcript_files(&root) {
             let key = path.to_string_lossy().to_string();
-            if b.is_hidden_usage_surface(&path) {
-                cache.tokens.remove(&key);
-                continue;
-            }
             seen.insert(key.clone());
             let Some((mtime, size)) = crate::session_cache::stat_key(&path) else {
                 continue;
             };
 
-            let prior = cache.tokens.get(&key).cloned();
+            let prior = tokens.get(&key).cloned();
             let entry = match &prior {
                 // Unchanged: reuse everything; today buckets only if same day.
                 Some(e) if e.mtime == mtime && e.size == size => {
@@ -302,10 +305,10 @@ fn compute_over_cached<'a>(
                     session_count: if entry.has_usage { 1 } else { 0 },
                 },
             );
-            cache.tokens.insert(key, entry);
+            tokens.insert(key, entry);
         }
     }
-    cache.tokens.retain(|k, _| seen.contains(k));
+    tokens.retain(|k, _| seen.contains(k));
     total
 }
 
@@ -317,12 +320,25 @@ fn refresh_if_stale(cache_state: &SessionCacheState, cache_path: Option<&Path>) 
         .unwrap_or(true);
     if stale {
         let today = Local::now().date_naive();
-        // Compute against the shared persistent cache, then snapshot it out
-        // from under its lock so the disk write happens lock-free.
-        let (stats, snapshot) = {
+
+        // Clone JUST the token map out from under the cache lock, then compute
+        // (a possibly ~35 s cold read of every surface) with NO lock held, so
+        // the session watcher and startup scan aren't stalled behind us. This
+        // command already runs off the UI thread via `invoke`, so the window
+        // never blocks; Home shows its last-known / zero number until we return.
+        let mut tokens = {
+            let pc = cache_state.0.lock().unwrap_or_else(|e| e.into_inner());
+            pc.tokens.clone()
+        };
+        let stats = compute_stats_all_cached(&mut tokens, today);
+
+        // Write the updated token map back, preserving any session-cache
+        // updates the watcher made while we were reading, then snapshot for the
+        // lock-free disk save.
+        let snapshot = {
             let mut pc = cache_state.0.lock().unwrap_or_else(|e| e.into_inner());
-            let stats = compute_stats_all_cached(&mut pc, today);
-            (stats, pc.clone())
+            pc.tokens = tokens;
+            pc.clone()
         };
         if let Some(path) = cache_path {
             let _ = crate::session_cache::save(path, &snapshot);
@@ -474,7 +490,7 @@ mod tests {
         let today = today_from_fixture();
         let direct = compute_stats(b, &fixtures_dir(), today);
 
-        let mut cache = PersistentCache::default();
+        let mut cache: HashMap<String, TokenEntry> = HashMap::new();
         let cached = compute_over_cached(&mut cache, std::iter::once((b, fixtures_dir())), today);
         assert_eq!(cached, direct);
     }
@@ -495,7 +511,7 @@ mod tests {
 
         // First scan: one record dated today.
         write_claude_usage(&file, &[(100, 50, 10, "2026-06-15T12:00:00Z")]);
-        let mut cache = PersistentCache::default();
+        let mut cache: HashMap<String, TokenEntry> = HashMap::new();
         let root = dir.path().to_path_buf();
         let s1 = compute_over_cached(&mut cache, std::iter::once((b, root.clone())), today);
         assert_eq!((s1.total_input, s1.total_output), (100, 50));
@@ -504,7 +520,7 @@ mod tests {
             (100, 50, 10)
         );
         assert_eq!(s1.session_count, 1);
-        let offset_after_first = cache.tokens.values().next().unwrap().offset;
+        let offset_after_first = cache.values().next().unwrap().offset;
 
         // Append a second record dated in the past (not today). Rescan reuses
         // the cached running totals and only reads the new bytes.
@@ -518,7 +534,7 @@ mod tests {
         );
         assert_eq!(s2.session_count, 1);
         // The stored offset advanced past the appended bytes.
-        assert!(cache.tokens.values().next().unwrap().offset > offset_after_first);
+        assert!(cache.values().next().unwrap().offset > offset_after_first);
 
         // Third scan, file unchanged: pure cache hit, identical numbers.
         let s3 = compute_over_cached(&mut cache, std::iter::once((b, root)), today);
@@ -539,7 +555,7 @@ mod tests {
             .unwrap()
             .with_timezone(&Local)
             .date_naive();
-        let mut cache = PersistentCache::default();
+        let mut cache: HashMap<String, TokenEntry> = HashMap::new();
         let root = dir.path().to_path_buf();
         let s1 = compute_over_cached(&mut cache, std::iter::once((b, root.clone())), day1);
         assert_eq!(s1.today_input, 100);
@@ -558,7 +574,7 @@ mod tests {
         std::fs::remove_file(&file).unwrap();
         let s3 = compute_over_cached(&mut cache, std::iter::once((b, root)), day2);
         assert_eq!(s3, TokenStats::default());
-        assert!(cache.tokens.is_empty());
+        assert!(cache.is_empty());
     }
 
     #[test]
