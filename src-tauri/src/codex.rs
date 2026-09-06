@@ -200,6 +200,32 @@ fn is_codex_app_originator(originator: &str) -> bool {
     APP_MARKERS.iter().any(|m| lower.contains(m))
 }
 
+/// Whether the rollout at `path` is a ChatGPT-app surface (Desktop /
+/// extension), decided from a **bounded head read** — never the whole file.
+/// The `session_meta` record carries the `originator` and is always the first
+/// record, so the head window covers it. Used by token scanning to skip these
+/// (they carry no usage records and are hidden in the sidebar); an unreadable
+/// or originator-less head fails open to `false` (treated as a real session),
+/// matching [`is_codex_app_originator`]'s fail-open policy.
+pub fn is_app_surface(path: &Path) -> bool {
+    let Some(head) = crate::bounded_read::read_head(path) else {
+        return false;
+    };
+    for line in head.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) == Some("session_meta") {
+            let orig = v
+                .get("payload")
+                .and_then(|p| p.get("originator"))
+                .and_then(|x| x.as_str());
+            return orig.is_some_and(is_codex_app_originator);
+        }
+    }
+    false
+}
+
 /// Parse one Codex rollout file into a [`SessionMeta`] tagged
 /// [`BackendKind::Codex`], or `None` if the file is unreadable / has no
 /// identifiable session id.
@@ -227,7 +253,11 @@ fn is_codex_app_originator(originator: &str) -> bool {
 /// single specific rollout, we key off `id`. (Task 3 runtime-verifies this
 /// against a live `codex` binary.)
 pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
-    let content = std::fs::read_to_string(path).ok()?;
+    // Read only the file edges. Codex rollouts are the giant files (up to
+    // 1.48 GB here); the session_meta + first user turn sit in the head, the
+    // last record in the tail, and the middle is never needed. Small fixtures
+    // fit the window whole, so their parse is byte-identical. See `bounded_read`.
+    let chunks = crate::bounded_read::read_head_tail(path)?;
     let mut id: Option<String> = None;
     let mut cwd: Option<String> = None;
     let mut title: Option<String> = None;
@@ -235,7 +265,7 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
     let mut last_role: Option<String> = None;
     let mut codex_app = false;
 
-    for line in content.lines() {
+    for line in chunks.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
@@ -480,6 +510,74 @@ mod tests {
         assert!(parse_transcript(Path::new("/nope/x.jsonl")).is_none());
     }
 
+    #[test]
+    fn large_file_parses_edges_without_reading_middle() {
+        use std::io::Write;
+        // Head: session_meta (id + cwd) and a first user turn that is ONLY an
+        // injected block, so the title stays unresolved through the head.
+        // Middle: 3 MB of junk PLUS a genuine user message that a full read
+        // would (wrongly) latch onto as the title. Tail: the last assistant
+        // record. Head+tail must fall back to cwd·date, never the middle
+        // message — proving the middle is skipped.
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir
+            .path()
+            .join("rollout-2026-09-06T00-00-00-019f9999-9999-7999-8999-00000000eeee.jsonl");
+        let mut f = std::fs::File::create(&p).unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-09-06T00:00:00Z","type":"session_meta","payload":{{"id":"019f9999-9999-7999-8999-00000000eeee","cwd":"/Users/me/bigproj","originator":"codex_cli_rs"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-09-06T00:00:01Z","type":"response_item","payload":{{"role":"user","content":[{{"type":"input_text","text":"<environment_context>\n  <cwd>/Users/me/bigproj</cwd>"}}]}}}}"#
+        )
+        .unwrap();
+        let pad = format!(r#"{{"pad":"{}"}}"#, "p".repeat(200));
+        let mut written = 0u64;
+        let w = |f: &mut std::fs::File, line: &str| {
+            writeln!(f, "{line}").unwrap();
+            line.len() as u64 + 1
+        };
+        // Pad past the head window so the poison lands in the untouched middle.
+        let head_target = written + 160 * 1024;
+        while written < head_target {
+            written += w(&mut f, &pad);
+        }
+        // Poison: a genuine user message buried in the deep middle.
+        written += w(
+            &mut f,
+            r#"{"timestamp":"2026-09-06T00:00:02Z","type":"response_item","payload":{"role":"user","content":[{"type":"input_text","text":"SHOULD-NOT-BE-TITLE"}]}}"#,
+        );
+        // Pad past the tail window so the poison also clears the tail.
+        let tail_target = written + 96 * 1024;
+        while written < tail_target {
+            written += w(&mut f, &pad);
+        }
+        w(
+            &mut f,
+            r#"{"timestamp":"2026-09-06T10:00:00Z","type":"response_item","payload":{"role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#,
+        );
+        f.flush().unwrap();
+        drop(f);
+
+        let m = parse_transcript(&p).unwrap();
+        assert_eq!(m.id, "019f9999-9999-7999-8999-00000000eeee");
+        assert_eq!(m.cwd.as_deref(), Some("/Users/me/bigproj"));
+        assert!(
+            m.title.starts_with("bigproj ·"),
+            "expected cwd·date fallback, got {:?}",
+            m.title
+        );
+        assert!(
+            !m.title.contains("SHOULD-NOT-BE-TITLE"),
+            "the middle user message must never be read"
+        );
+        assert_eq!(m.last_role.as_deref(), Some("assistant"));
+        assert_eq!(m.last_activity.to_rfc3339(), "2026-09-06T10:00:00+00:00");
+    }
+
     // A ChatGPT-Desktop-app rollout (originator "Codex Desktop"). Otherwise
     // perfectly parseable — it must be skipped purely on originator.
     fn fixture_desktop() -> PathBuf {
@@ -681,6 +779,17 @@ mod tests {
         // prompt scrape — it's always present in the TUI, so matching it would
         // pin every running Codex session to NeedsYou.
         assert!(!tail_looks_like_prompt("› Ask Codex to do anything"));
+    }
+
+    #[test]
+    fn is_app_surface_flags_desktop_from_head_only() {
+        // The ChatGPT-Desktop rollout is an app surface (skipped by token
+        // scanning); the CLI-originated ones are not. Decided from the head.
+        assert!(is_app_surface(&fixture_desktop()));
+        assert!(!is_app_surface(&fixture_a()));
+        assert!(!is_app_surface(&fixture_b()));
+        // A missing file fails open to "not an app surface" (a real session).
+        assert!(!is_app_surface(Path::new("/nope/x.jsonl")));
     }
 
     #[test]
