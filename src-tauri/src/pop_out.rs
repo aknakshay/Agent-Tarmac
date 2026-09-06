@@ -20,7 +20,8 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use crate::pty_manager::{claude_program, PtyManager};
+use crate::backend::{backend_for, BackendKind};
+use crate::pty_manager::PtyManager;
 use crate::session_index::SessionIndexState;
 use crate::workspace_store::{self, WorkspaceState};
 
@@ -185,15 +186,28 @@ fn shell_single_quote_escape(s: &str) -> String {
 }
 
 /// Builds the contents of the resume script written to disk for a popped-out
-/// session: `cd` into the session's working directory, then exec `claude
-/// --resume <id>` in place (so the shell's pid is claude's pid, and closing
-/// the terminal window kills the right process).
-pub fn pop_out_script(cwd: &str, id: &str) -> String {
+/// session: `cd` into the session's working directory, then `exec` the owning
+/// backend's resume command in place (so the shell's pid *is* the CLI's pid,
+/// and closing the terminal window kills the right process).
+///
+/// The program + args come from the session's backend
+/// ([`SessionBackend::resume_argv`](crate::backend::SessionBackend::resume_argv)),
+/// so Claude gets `claude --resume <id>` and Codex `codex resume <id>` from
+/// the same seam the in-app resume uses — the pop-out and the sidebar can
+/// never launch different commands for the same session. Each arg is
+/// single-quoted for the shell; the resolved program path is emitted as-is
+/// (it comes from the binary resolver, not user input).
+pub fn pop_out_script(cwd: &str, id: &str, backend: BackendKind) -> String {
+    let (program, args) = backend_for(backend).resume_argv(id);
+    let quoted_args: Vec<String> = args
+        .iter()
+        .map(|a| format!("'{}'", shell_single_quote_escape(a)))
+        .collect();
     format!(
-        "#!/bin/sh\ncd '{cwd}' && exec {program} --resume '{id}'\n",
+        "#!/bin/sh\ncd '{cwd}' && exec {program} {args}\n",
         cwd = shell_single_quote_escape(cwd),
-        program = claude_program(),
-        id = shell_single_quote_escape(id),
+        program = program,
+        args = quoted_args.join(" "),
     )
 }
 
@@ -493,18 +507,33 @@ pub fn parse_pids(output: &str) -> Vec<u32> {
         .collect()
 }
 
-/// Runs `pgrep -f "claude --resume <session_id>"` and returns the matching
-/// pids. An empty list means the session is not currently running externally.
+/// Finds the pids of any popped-out resume process for `session_id`, across
+/// every backend. An empty list means the session is not currently running
+/// externally.
+///
+/// Rather than take a backend argument (which the startup reconcile path
+/// doesn't have — the workspace persists only ids, not their backend), this
+/// `pgrep -f`s each backend's [`external_resume_pattern`] and unions the
+/// results. The patterns embed the session uuid, so a Claude and a Codex
+/// pattern can't match the same process; deduping guards against a pathological
+/// double-match anyway.
+///
+/// [`external_resume_pattern`]: crate::backend::SessionBackend::external_resume_pattern
 fn find_external_pids(session_id: &str) -> Vec<u32> {
-    let pattern = format!("claude --resume {session_id}");
-    let output = std::process::Command::new("pgrep")
-        .arg("-f")
-        .arg(&pattern)
-        .output();
-    match output {
-        Ok(out) => parse_pids(&String::from_utf8_lossy(&out.stdout)),
-        Err(_) => vec![],
+    let mut pids = Vec::new();
+    for backend in crate::backend::all_backends() {
+        let pattern = backend.external_resume_pattern(session_id);
+        if let Ok(out) = std::process::Command::new("pgrep")
+            .arg("-f")
+            .arg(&pattern)
+            .output()
+        {
+            pids.extend(parse_pids(&String::from_utf8_lossy(&out.stdout)));
+        }
     }
+    pids.sort_unstable();
+    pids.dedup();
+    pids
 }
 
 /// Sends SIGTERM to a single pid. Returns an error string if `kill(2)` fails.
@@ -533,15 +562,17 @@ pub fn pop_out_to_ghostty(
 ) -> Result<PopOutResult, String> {
     validate_session_id(&session_id)?;
 
-    let cwd = {
+    let (cwd, backend) = {
         let sessions = session_index.0.lock().unwrap_or_else(|e| e.into_inner());
         let meta = sessions
             .iter()
             .find(|s| s.id == session_id)
             .ok_or_else(|| format!("unknown session: {session_id}"))?;
-        meta.cwd
+        let cwd = meta
+            .cwd
             .clone()
-            .ok_or_else(|| format!("session {session_id} has no known cwd"))?
+            .ok_or_else(|| format!("session {session_id} has no known cwd"))?;
+        (cwd, meta.backend)
     };
 
     // A session can never be driven by two processes at once: stop
@@ -567,7 +598,7 @@ pub fn pop_out_to_ghostty(
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("pop_out");
-    let script_contents = pop_out_script(&cwd, &session_id);
+    let script_contents = pop_out_script(&cwd, &session_id, backend);
     let script_path = write_script(&pop_out_dir, &session_id, &script_contents)?;
     let script_path_str = script_path.to_string_lossy().to_string();
 
@@ -646,9 +677,10 @@ pub fn reconcile_external_on_startup(app: &AppHandle) {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BringBackOutcome {
-    /// External claude process was found, SIGTERM'd, and confirmed stopped.
+    /// External CLI process (claude or codex) was found, SIGTERM'd, and
+    /// confirmed stopped.
     Stopped,
-    /// No external claude process was found; session can be resumed immediately.
+    /// No external CLI process was found; session can be resumed immediately.
     NotRunning,
 }
 
@@ -661,7 +693,8 @@ pub struct BringBackResult {
 /// Brings a popped-out session back into agent-tarmac:
 /// 1. Validates the session id, and refuses ids not tracked in
 ///    `ExternalSessions` (only sessions this app popped out may be killed).
-/// 2. Finds any external `claude --resume <id>` processes via `pgrep -f`.
+/// 2. Finds any external resume process via `pgrep -f` (Claude
+///    `claude --resume <id>` or Codex `codex resume <id>`, tried per backend).
 /// 3. SIGTERMs each found pid (plain SIGTERM to the pid; NOT killpg).
 /// 4. Polls until `pgrep` finds no more matching pids (reusing `poll_until_stopped`).
 /// 5. Removes the id from `ExternalSessions` so the frontend can resume normally.
@@ -727,21 +760,41 @@ mod tests {
 
     #[test]
     fn pop_out_script_contains_cwd_and_resume_id() {
-        let script = pop_out_script("/Users/me/proj", "abc-123");
+        let script = pop_out_script("/Users/me/proj", "abc-123", BackendKind::Claude);
         assert!(
             script.contains("cd '/Users/me/proj'"),
             "script should cd into cwd, got: {script}"
         );
+        // Claude args are `--resume <id>`; each is single-quoted for the shell.
         assert!(
-            script.contains("--resume 'abc-123'"),
+            script.contains("'--resume' 'abc-123'"),
             "script should resume by id, got: {script}"
+        );
+        assert!(
+            script.contains(" exec "),
+            "script should exec in place: {script}"
         );
         assert!(script.starts_with("#!/bin/sh\n"));
     }
 
     #[test]
+    fn pop_out_script_codex_uses_resume_subcommand() {
+        // Codex resumes via a `resume` subcommand, not a `--resume` flag —
+        // the script must reflect the backend's own argv.
+        let script = pop_out_script("/Users/me/proj", "abc-123", BackendKind::Codex);
+        assert!(
+            script.contains("'resume' 'abc-123'"),
+            "codex script should use the resume subcommand, got: {script}"
+        );
+        assert!(
+            !script.contains("--resume"),
+            "codex must not use the claude --resume flag, got: {script}"
+        );
+    }
+
+    #[test]
     fn pop_out_script_escapes_single_quotes_in_cwd() {
-        let script = pop_out_script("/Users/me/it's a dir", "abc-123");
+        let script = pop_out_script("/Users/me/it's a dir", "abc-123", BackendKind::Claude);
         assert!(
             script.contains("cd '/Users/me/it'\"'\"'s a dir'"),
             "single quote in cwd should be escaped via '\"'\"', got: {script}"
@@ -750,9 +803,9 @@ mod tests {
 
     #[test]
     fn pop_out_script_escapes_single_quotes_in_id() {
-        let script = pop_out_script("/tmp", "weird'id");
+        let script = pop_out_script("/tmp", "weird'id", BackendKind::Claude);
         assert!(
-            script.contains("--resume 'weird'\"'\"'id'"),
+            script.contains("'weird'\"'\"'id'"),
             "single quote in id should be escaped, got: {script}"
         );
     }

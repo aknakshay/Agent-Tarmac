@@ -2,7 +2,8 @@
 //! session from the session index and PTY manager, and emits
 //! `session_status_changed` whenever a session's status changes.
 
-use crate::activity::{derive_status, tail_looks_like_prompt, Status, StatusInputs};
+use crate::activity::{derive_status, Status, StatusInputs};
+use crate::backend::backend_for;
 use crate::pop_out::ExternalSessions;
 use crate::pty_manager::PtyManager;
 use crate::session_index::SessionIndexState;
@@ -191,7 +192,10 @@ fn tick(
             None => transcript_secs,
         };
 
-        let prompt_at_tail = tail_looks_like_prompt(&pty_manager.last_output_tail(&session.id));
+        // Prompt detection is backend-specific (each CLI's TUI prints its own
+        // "waiting on you" strings), so dispatch to the session's backend.
+        let prompt_at_tail = backend_for(session.backend)
+            .tail_looks_like_prompt(&pty_manager.last_output_tail(&session.id));
         let last_role_assistant = session.last_role.as_deref() == Some("assistant");
 
         let status = derive_status(&StatusInputs {

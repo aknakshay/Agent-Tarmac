@@ -59,6 +59,14 @@ export function SessionRow({
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-1.5">
           <span className={`truncate text-sm ${unread ? "font-semibold text-ink" : "text-ink"}`}>{title}</span>
+          {session.backend === "codex" && (
+            <span
+              className="shrink-0 rounded-[3px] border border-codex/35 px-1 py-px text-[9px] font-semibold uppercase leading-none tracking-[0.08em] text-codex"
+              title="OpenAI Codex session"
+            >
+              codex
+            </span>
+          )}
           {session.badge && (
             <span
               className="h-1.5 w-1.5 shrink-0 rounded-full bg-needs-you"

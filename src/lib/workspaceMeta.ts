@@ -19,6 +19,11 @@ export interface Workspace {
   favorites: string[];
   session_meta: Record<string, WireSessionMetaEntry>;
   project_meta: Record<string, WireProjectMetaEntry>;
+  /** Whether to show Codex sessions from the ChatGPT apps (Desktop app, Chrome
+   * extension) rather than only the terminal CLI. Optional for back-compat with
+   * a workspace.json written before it existed (absent ⇒ false ⇒ app sessions
+   * hidden). */
+  show_codex_app?: boolean;
 }
 
 /**

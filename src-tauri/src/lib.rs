@@ -1,5 +1,8 @@
 pub mod activity;
+pub mod backend;
 pub mod claude_bin;
+pub mod codex;
+pub mod codex_bin;
 pub mod pop_out;
 pub mod pty_manager;
 pub mod session_index;
@@ -16,8 +19,8 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 /// Checks whether the `claude` binary (resolved via
-/// `claude_bin::claude_program`, same resolution `pty_manager::claude_program`
-/// uses) is runnable, for the sidebar's "no sessions found" empty-state
+/// `claude_bin::claude_program`) is runnable, for the sidebar's "no sessions
+/// found" empty-state
 /// hint. Returns the version string on success, `None` if the binary isn't
 /// found or exits non-zero — either way, never an error the frontend has to
 /// handle, since "not installed" is an expected, common state here (not a
@@ -44,7 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(session_index::SessionIndexState(Mutex::new(
-            session_index::scan(&session_index::claude_projects_dir()),
+            session_index::scan_all(),
         )))
         .manage(workspace_store::WorkspaceState(Mutex::new(
             workspace_store::Workspace::default(),

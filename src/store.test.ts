@@ -33,6 +33,7 @@ beforeEach(() =>
     metaCache: {},
     favoriteIdsCache: [],
     projectNames: {},
+    showCodexApp: false,
   }),
 );
 
@@ -41,6 +42,41 @@ describe("useDeck", () => {
     useDeck.getState().setSessions([{ id: "a", cwd: "/p", title: "t", last_activity: "2026-09-05T10:00:00Z", last_role: "assistant" }]);
     useDeck.getState().setStatus("a", "needsYou");
     expect(useDeck.getState().sessions["a"].badge).toBe(true);
+  });
+
+  it("threads backend through, defaulting a metaless session to claude", () => {
+    useDeck.getState().setSessions([
+      { id: "cx", cwd: "/p", title: "t", last_activity: "2026-09-05T10:00:00Z", last_role: "assistant", backend: "codex" },
+      { id: "cl", cwd: "/p", title: "t", last_activity: "2026-09-05T10:00:00Z", last_role: "assistant" },
+    ]);
+    expect(useDeck.getState().sessions["cx"].backend).toBe("codex");
+    // No backend on the wire (pre-backend transcript) reads as claude.
+    expect(useDeck.getState().sessions["cl"].backend).toBe("claude");
+  });
+
+  it("threads codexApp from meta and hydrates/toggles the show setting", () => {
+    useDeck.getState().setSessions([
+      { id: "d", cwd: "/p", title: "t", last_activity: "2026-09-05T10:00:00Z", last_role: "user", backend: "codex", codex_app: true },
+      { id: "c", cwd: "/p", title: "t", last_activity: "2026-09-05T10:00:00Z", last_role: "user", backend: "codex" },
+    ]);
+    expect(useDeck.getState().sessions["d"].codexApp).toBe(true);
+    // Absent codex_app reads as false.
+    expect(useDeck.getState().sessions["c"].codexApp).toBe(false);
+
+    // Default off; hydrateMeta picks up the persisted flag.
+    expect(useDeck.getState().showCodexApp).toBe(false);
+    useDeck.getState().hydrateMeta({
+      live_session_ids: [],
+      favorites: [],
+      session_meta: {},
+      project_meta: {},
+      show_codex_app: true,
+    });
+    expect(useDeck.getState().showCodexApp).toBe(true);
+
+    // Explicit toggle wins.
+    useDeck.getState().setShowCodexApp(false);
+    expect(useDeck.getState().showCodexApp).toBe(false);
   });
 
   it("focus clears badge and opens pane", () => {

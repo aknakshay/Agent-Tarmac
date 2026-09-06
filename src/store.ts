@@ -145,6 +145,14 @@ interface DeckState {
   externalIds: string[];
   setExternalIds(ids: string[]): void;
   setSessionExternal(id: string, external: boolean): void;
+  /**
+   * Whether ChatGPT-app Codex sessions (Desktop app, Chrome extension) are
+   * shown in the sidebar, as opposed to only terminal-CLI sessions. Off by
+   * default (Agent Tarmac is a terminal-CLI cockpit). Hydrated from
+   * `workspace.show_codex_app` and persisted on toggle.
+   */
+  showCodexApp: boolean;
+  setShowCodexApp(show: boolean): void;
 }
 
 export const useDeck = create<DeckState>()((set, get) => ({
@@ -155,6 +163,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
   metaCache: {},
   favoriteIdsCache: [],
   projectNames: {},
+  showCodexApp: false,
 
   setSessions: (metas) => {
     const existing = get().sessions;
@@ -185,6 +194,8 @@ export const useDeck = create<DeckState>()((set, get) => ({
         lastSeenAt,
         tags: prev?.tags ?? cached?.tags ?? [],
         customTitle: prev?.customTitle ?? cached?.custom_title ?? null,
+        backend: meta.backend ?? "claude",
+        codexApp: meta.codex_app ?? false,
       };
     }
     for (const [id, session] of Object.entries(existing)) {
@@ -311,8 +322,23 @@ export const useDeck = create<DeckState>()((set, get) => ({
         projectNames[cwd] = entry.custom_name;
       }
 
-      return { sessions, metaCache: ws.session_meta, favoriteIdsCache: ws.favorites, projectNames };
+      return {
+        sessions,
+        metaCache: ws.session_meta,
+        favoriteIdsCache: ws.favorites,
+        projectNames,
+        showCodexApp: ws.show_codex_app ?? false,
+      };
     });
+  },
+
+  setShowCodexApp: (show) => {
+    set({ showCodexApp: show });
+    // Persist through the same serialized RMW every other setting uses, so a
+    // concurrent favorite/meta write can't clobber it.
+    updateWorkspace((ws) => ({ ...ws, show_codex_app: show })).catch((err) =>
+      console.error("Failed to persist show_codex_app", err),
+    );
   },
 
   setMarkedUnread: (id, unread) => {
