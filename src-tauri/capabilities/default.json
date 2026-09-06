@@ -7,6 +7,11 @@
     "core:default",
     "opener:default",
     "dialog:default",
-    "notification:default"
+    "notification:default",
+    "fs:allow-write-file",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "**" }]
+    }
   ]
 }
