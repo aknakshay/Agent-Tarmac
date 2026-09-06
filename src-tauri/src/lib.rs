@@ -3,6 +3,7 @@ pub mod claude_bin;
 pub mod pop_out;
 pub mod pty_manager;
 pub mod session_index;
+pub mod snapshot;
 pub mod status_loop;
 pub mod token_stats;
 pub mod transcript;
@@ -41,7 +42,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_fs::init())
         .manage(session_index::SessionIndexState(Mutex::new(
             session_index::scan(&session_index::claude_projects_dir()),
         )))
@@ -65,6 +65,7 @@ pub fn run() {
             pop_out::detect_terminals,
             pop_out::list_external_sessions,
             token_stats::token_stats,
+            snapshot::save_snapshot_png,
         ])
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());

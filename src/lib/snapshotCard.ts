@@ -1,5 +1,5 @@
 import { save } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 import type { BestScore } from "./tarmacDefenseBest";
 import { formatTokenCount } from "./formatTokens";
 import type { TokenStats } from "./tokenStats";
@@ -216,6 +216,22 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
+/**
+ * Base64-encodes a blob's bytes, chunked to avoid blowing the call stack
+ * that `String.fromCharCode(...bytes)` would hit on a large spread — a PNG
+ * this size (a few hundred KB) is comfortably past that limit in some
+ * engines.
+ */
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const CHUNK_SIZE = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK_SIZE));
+  }
+  return btoa(binary);
+}
+
 /** Renders the card to an offscreen canvas and resolves with a PNG blob. */
 export function renderSnapshotBlob(data: SnapshotData): Promise<Blob> {
   const canvas = document.createElement("canvas");
@@ -256,8 +272,8 @@ export async function shareSnapshot(data: SnapshotData): Promise<ShareSnapshotRe
       filters: [{ name: "PNG image", extensions: ["png"] }],
     });
     if (!path) return { method: "cancelled" };
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    await writeFile(path, bytes);
+    const dataB64 = await blobToBase64(blob);
+    await invoke("save_snapshot_png", { path, dataB64 });
     return { method: "file", path };
   }
 }
