@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { isMuted, playGameSound, setMuted } from "../lib/gameSound";
 import { loadBest, saveBest, type BestScore } from "../lib/tarmacDefenseBest";
+import { shareSnapshot } from "../lib/snapshotCard";
+import { EMPTY_TOKEN_STATS, fetchTokenStats, type TokenStats } from "../lib/tokenStats";
+import { Toast, useToast } from "./Toast";
 import {
   circlesOverlap,
   comboMultiplier,
@@ -529,12 +532,64 @@ function paintTank(ctx: CanvasRenderingContext2D, half: number) {
   }
 }
 
-export function TarmacDefense({ onExit }: { onExit: () => void }) {
+interface TarmacDefenseProps {
+  onExit: () => void;
+  /** Context for the death-screen share card — same numbers Home's own
+   * "Share snapshot" button uses, threaded down so the card is consistent
+   * wherever it's triggered from. */
+  sessionsToday?: number;
+  projects?: number;
+  version?: string | null;
+}
+
+export function TarmacDefense({ onExit, sessionsToday = 0, projects = 0, version = null }: TarmacDefenseProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<GameState>(newGame(480, 360));
   const keysRef = useRef<Set<string>>(new Set());
   const reducedMotionRef = useRef(false);
   const [muted, setMutedState] = useState(() => isMuted());
+  const [phase, setPhase] = useState<Phase>("playing");
+  const lastPhaseRef = useRef<Phase>("playing");
+  const [tokens, setTokens] = useState<TokenStats>(EMPTY_TOKEN_STATS);
+  const [sharing, setSharing] = useState(false);
+  const { toast, showToast } = useToast();
+
+  // Fresh numbers for the death-screen share card — fetched once the run
+  // actually ends rather than kept warm the whole game, since the card is
+  // the only consumer here and a shooter loop is not the place for a
+  // polling interval.
+  useEffect(() => {
+    if (phase === "gameover") {
+      fetchTokenStats()
+        .then(setTokens)
+        .catch(() => {
+          // leave last-known (possibly zeroed) tokens on screen
+        });
+    }
+  }, [phase]);
+
+  const handleShare = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const best = stateRef.current.lastRun ?? stateRef.current.best;
+      const result = await shareSnapshot({
+        tokens,
+        sessionsToday,
+        projects,
+        best,
+        version,
+        now: new Date(),
+      });
+      if (result.method === "clipboard") showToast("Snapshot copied");
+      else if (result.method === "file") showToast("Snapshot saved");
+    } catch (err) {
+      console.error("Failed to share snapshot", err);
+      showToast("Couldn't create snapshot");
+    } finally {
+      setSharing(false);
+    }
+  };
 
   const toggleMute = () => {
     setMutedState((prev) => {
@@ -789,6 +844,16 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
       state.stripeOffset = (state.stripeOffset + 1.5) % 40;
       draw(ctx, state, time, reducedMotionRef.current);
       state.prevPlayerX = state.playerX;
+
+      // The rest of the game lives in a mutable ref (see file header comment)
+      // to avoid a per-frame re-render, but the death-screen Share button is
+      // real HTML overlaid on the canvas, so its visibility needs one piece
+      // of actual React state — synced here only on the (rare) frames where
+      // phase actually changes.
+      if (state.phase !== lastPhaseRef.current) {
+        lastPhaseRef.current = state.phase;
+        setPhase(state.phase);
+      }
     };
 
     raf = requestAnimationFrame(tick);
@@ -813,6 +878,17 @@ export function TarmacDefense({ onExit }: { onExit: () => void }) {
       <p className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 text-xs text-ink-faint">
         Arrows/WASD to move · Space to fire · M to mute · Esc to exit
       </p>
+      {phase === "gameover" && (
+        <button
+          type="button"
+          onClick={handleShare}
+          disabled={sharing}
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 translate-y-[86px] rounded-md border border-border bg-black/40 px-3 py-1.5 text-xs font-medium text-ink-muted transition-colors duration-150 hover:border-accent/50 hover:text-ink disabled:opacity-50"
+        >
+          {sharing ? "Rendering…" : "Share"}
+        </button>
+      )}
+      <Toast toast={toast} />
     </div>
   );
 }

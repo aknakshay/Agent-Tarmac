@@ -1,0 +1,4 @@
+{"type":"summary","summary":"Fix events cold start"}
+{"type":"assistant","timestamp":"2026-01-01T12:00:00Z","message":{"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":10,"cache_creation_input_tokens":0}}}
+{"type":"assistant","timestamp":"2025-12-29T12:00:00Z","message":{"usage":{"input_tokens":200,"output_tokens":80,"cache_read_input_tokens":5,"cache_creation_input_tokens":0}}}
+{"type":"user","message":{"content":"hi"}}

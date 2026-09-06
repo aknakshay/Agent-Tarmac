@@ -5,8 +5,12 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useDeck } from "../store";
 import { computeFleetStats, playCardFraming, type RightNowStats } from "../lib/stats";
 import { loadBest, type BestScore } from "../lib/tarmacDefenseBest";
+import { formatTokenCount } from "../lib/formatTokens";
+import { EMPTY_TOKEN_STATS, fetchTokenStats, type TokenStats } from "../lib/tokenStats";
+import { shareSnapshot } from "../lib/snapshotCard";
 import { Logo, RunwayDivider } from "./icons/BrandMotifs";
 import { TarmacDefense } from "./TarmacDefense";
+import { Toast, useToast } from "./Toast";
 
 interface UpdateAvailablePayload {
   version: string;
@@ -51,8 +55,64 @@ export function Home() {
     };
   }, []);
 
+  const [tokens, setTokens] = useState<TokenStats>(EMPTY_TOKEN_STATS);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      fetchTokenStats()
+        .then((next) => {
+          if (!cancelled) setTokens(next);
+        })
+        .catch(() => {
+          // token_stats() never errors on the Rust side (missing dir just
+          // yields zeros) — this only fires if the command itself can't be
+          // reached, in which case the last-known stats stay on screen.
+        });
+    };
+    refresh();
+    // The backend cache refreshes at most once every 60s, so polling faster
+    // than that just re-reads the same cached snapshot — 30s keeps the
+    // number moving during a session without any real extra scan cost.
+    const interval = window.setInterval(refresh, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const { toast, showToast } = useToast();
+  const [sharing, setSharing] = useState(false);
+  const handleShare = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      const result = await shareSnapshot({
+        tokens,
+        sessionsToday: stats.activeToday,
+        projects: stats.totals.projects,
+        best,
+        version,
+        now: new Date(),
+      });
+      if (result.method === "clipboard") showToast("Snapshot copied");
+      else if (result.method === "file") showToast("Snapshot saved");
+    } catch (err) {
+      console.error("Failed to share snapshot", err);
+      showToast("Couldn't create snapshot");
+    } finally {
+      setSharing(false);
+    }
+  };
+
   if (playing) {
-    return <TarmacDefense onExit={() => setPlaying(false)} />;
+    return (
+      <TarmacDefense
+        onExit={() => setPlaying(false)}
+        sessionsToday={stats.activeToday}
+        projects={stats.totals.projects}
+        version={version}
+      />
+    );
   }
 
   return (
@@ -115,6 +175,10 @@ export function Home() {
           </div>
         </section>
 
+        <RunwayDivider />
+
+        <TokensSection tokens={tokens} sharing={sharing} onShare={handleShare} />
+
         <footer className="flex items-center justify-center gap-1.5 pt-2 text-xs text-ink-faint">
           <span>Agent Tarmac{version ? ` v${version}` : ""}</span>
           <span aria-hidden="true">·</span>
@@ -133,7 +197,51 @@ export function Home() {
           )}
         </footer>
       </div>
+      <Toast toast={toast} />
     </div>
+  );
+}
+
+/**
+ * The "tokenmaxxing" stats section — today's output tokens as the flex
+ * number (largest figure on the page besides the game's own HUD), input +
+ * cache-read kept subtle beneath it, all-time total as the long view. The
+ * share button renders the same numbers into a boarding-pass-style PNG via
+ * lib/snapshotCard.ts and copies it to the clipboard.
+ */
+function TokensSection({
+  tokens,
+  sharing,
+  onShare,
+}: {
+  tokens: TokenStats;
+  sharing: boolean;
+  onShare: () => void;
+}) {
+  const allTime = tokens.totalInput + tokens.totalOutput;
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-ink-muted">Tokenmaxxing</h2>
+        <button
+          type="button"
+          onClick={onShare}
+          disabled={sharing}
+          title="Copy a shareable tokenmaxxing snapshot"
+          className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink-muted transition-colors duration-150 hover:border-accent/50 hover:text-ink disabled:opacity-50"
+        >
+          {sharing ? "Rendering…" : "Share snapshot"}
+        </button>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-4xl font-semibold tabular-nums text-ink">{formatTokenCount(tokens.todayOutput)}</span>
+        <span className="text-xs text-ink-faint">tokens out today</span>
+      </div>
+      <p className="text-xs text-ink-faint">
+        {formatTokenCount(tokens.todayInput)} in · {formatTokenCount(tokens.todayCacheRead)} cache read
+      </p>
+      <p className="text-xs text-ink-faint">{formatTokenCount(allTime)} all-time</p>
+    </section>
   );
 }
 
