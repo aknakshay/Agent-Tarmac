@@ -181,11 +181,14 @@ fn truncate(s: &str, n: usize) -> String {
 /// A **denylist** ("contains `desktop`", case-insensitively) rather than a CLI
 /// allowlist: real values seen in the wild are `"Codex Desktop"` (207) and
 /// `"codex_work_desktop"` (45); an unknown *CLI* originator should still show,
-/// so only an explicit desktop marker hides a session. Missing originator ⇒
-/// kept (fail-open toward showing).
+/// so only an explicit desktop marker tags a session as Desktop. Missing
+/// originator ⇒ not Desktop (fail-open toward showing).
 ///
-/// v0.4.0 default; a "show ChatGPT Desktop sessions" toggle is a roadmap item
-/// (no settings pane yet).
+/// This only *tags* the session (`SessionMeta::codex_desktop`); the hide/show
+/// policy lives at the UI boundary and is user-controllable via the
+/// `Workspace::show_codex_desktop` setting (off by default). The
+/// chrome-extension originator (`codex-chrome-extension-sidepanel`) does not
+/// contain "desktop", so it is treated as non-Desktop and shown.
 fn is_desktop_originator(originator: &str) -> bool {
     originator.to_ascii_lowercase().contains("desktop")
 }
@@ -223,6 +226,7 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
     let mut title: Option<String> = None;
     let mut last_ts: Option<DateTime<Utc>> = None;
     let mut last_role: Option<String> = None;
+    let mut codex_desktop = false;
 
     for line in content.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -232,13 +236,11 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
         match v.get("type").and_then(|t| t.as_str()) {
             Some("session_meta") => {
                 if let Some(p) = payload {
-                    // Hide ChatGPT-Desktop-app sessions — this is a terminal
-                    // cockpit (see `is_desktop_originator`). A skipped rollout
-                    // is simply not indexed.
+                    // Tag ChatGPT-Desktop-app sessions (see
+                    // `is_desktop_originator`). The session is still indexed;
+                    // the UI hides it unless "show Desktop sessions" is on.
                     if let Some(orig) = p.get("originator").and_then(|x| x.as_str()) {
-                        if is_desktop_originator(orig) {
-                            return None;
-                        }
+                        codex_desktop = is_desktop_originator(orig);
                     }
                     if id.is_none() {
                         id = p.get("id").and_then(|x| x.as_str()).map(String::from);
@@ -294,6 +296,7 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
         last_activity,
         last_role,
         backend: BackendKind::Codex,
+        codex_desktop,
     })
 }
 
@@ -479,14 +482,18 @@ mod tests {
     }
 
     #[test]
-    fn desktop_originator_session_is_skipped() {
-        // v0.4.0: ChatGPT-Desktop sessions are hidden (terminal-CLI cockpit).
-        // The fixture has a real title + turns, so only the originator can be
-        // what drops it.
-        assert!(
-            parse_transcript(&fixture_desktop()).is_none(),
-            "a Codex Desktop rollout must not be indexed"
-        );
+    fn desktop_originator_session_is_tagged_not_dropped() {
+        // A ChatGPT-Desktop rollout is still parsed and indexed, but tagged
+        // codex_desktop=true so the UI can hide it unless the user opts in.
+        let m = parse_transcript(&fixture_desktop()).unwrap();
+        assert!(m.codex_desktop, "Codex Desktop session must be tagged");
+        assert_eq!(m.id, "019f3333-3333-7333-8333-00000000dddd");
+    }
+
+    #[test]
+    fn cli_originator_session_is_not_tagged_desktop() {
+        // The re-originated fixtures ("codex_cli") must NOT be tagged desktop.
+        assert!(!parse_transcript(&fixture_a()).unwrap().codex_desktop);
     }
 
     #[test]

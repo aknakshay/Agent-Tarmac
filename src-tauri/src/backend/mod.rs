@@ -394,17 +394,19 @@ mod tests {
     fn codex_scan_over_fixture_tree_is_codex_tagged() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex");
         let all = CODEX.scan(&dir);
-        // 4 rollout files on disk, but the desktop-originated one is filtered
-        // out at parse time (terminal-CLI cockpit), leaving 3 CLI sessions.
-        assert_eq!(all.len(), 3);
-        assert!(
-            !all.iter()
-                .any(|s| s.id == "019f3333-3333-7333-8333-00000000dddd"),
-            "the Codex Desktop session must not be indexed"
-        );
-        // Newest-activity first (2026-09-06, then 2026-09-05, then 2026-08-15).
-        assert!(all[0].last_activity >= all[1].last_activity);
-        assert!(all[1].last_activity >= all[2].last_activity);
+        // Discovery indexes every rollout (4), tagging — not dropping — the
+        // desktop-originated one; the UI-boundary filter hides it later.
+        assert_eq!(all.len(), 4);
+        let desktop = all
+            .iter()
+            .find(|s| s.id == "019f3333-3333-7333-8333-00000000dddd")
+            .expect("desktop session is still indexed");
+        assert!(desktop.codex_desktop, "desktop session must be tagged");
+        assert_eq!(all.iter().filter(|s| s.codex_desktop).count(), 1);
+        // Newest-activity first across all four.
+        assert!(all
+            .windows(2)
+            .all(|w| w[0].last_activity >= w[1].last_activity));
         assert!(all.iter().all(|s| s.backend == BackendKind::Codex));
     }
 

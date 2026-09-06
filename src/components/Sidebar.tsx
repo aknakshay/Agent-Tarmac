@@ -36,6 +36,8 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const setCustomTitle = useDeck((state) => state.setCustomTitle);
   const setProjectName = useDeck((state) => state.setProjectName);
   const projectNames = useDeck((state) => state.projectNames);
+  const showCodexDesktop = useDeck((state) => state.showCodexDesktop);
+  const setShowCodexDesktop = useDeck((state) => state.setShowCodexDesktop);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [showHistory, setShowHistory] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
@@ -49,19 +51,29 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const [claudeCheck, setClaudeCheck] = useState<"checking" | "missing" | "found">("checking");
 
   const all = useMemo(() => Object.values(sessions), [sessions]);
+  // ChatGPT-Desktop Codex sessions are hidden unless the user opts in; `all`
+  // still holds them so the toggle can report how many are hidden and reveal
+  // them instantly (no rescan).
+  const desktopCount = useMemo(() => all.filter((s) => s.codexDesktop).length, [all]);
+  const visible = useMemo(
+    () => (showCodexDesktop ? all : all.filter((s) => !s.codexDesktop)),
+    [all, showCodexDesktop],
+  );
 
   useEffect(() => {
-    if (all.length > 0) return;
+    // Only probe for `claude` when there's genuinely nothing to show — not
+    // when the only sessions are hidden Desktop ones (the toggle covers that).
+    if (visible.length > 0 || desktopCount > 0) return;
     invoke<string | null>("check_claude")
       .then((version) => setClaudeCheck(version ? "found" : "missing"))
       .catch(() => setClaudeCheck("missing"));
-  }, [all.length]);
+  }, [visible.length, desktopCount]);
 
   const allTags = useMemo(() => {
     const set = new Set<string>();
-    for (const session of all) for (const tag of session.tags) set.add(tag);
+    for (const session of visible) for (const tag of session.tags) set.add(tag);
     return [...set].sort((a, b) => a.localeCompare(b));
-  }, [all]);
+  }, [visible]);
 
   const toggleTagFilter = (tag: string) => {
     setActiveTags((prev) => {
@@ -74,7 +86,7 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
 
   const { groups, hiddenDormantCount } = useMemo(() => {
     const filtered =
-      activeTags.size === 0 ? all : all.filter((s) => s.tags.some((tag) => activeTags.has(tag)));
+      activeTags.size === 0 ? visible : visible.filter((s) => s.tags.some((tag) => activeTags.has(tag)));
     const favorites = filtered.filter((s) => s.favorite);
     const rest = filtered.filter((s) => !s.favorite);
 
@@ -120,7 +132,7 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
     groups.sort((a, b) => b.mostRecent - a.mostRecent);
 
     return { groups, hiddenDormantCount };
-  }, [all, showHistory, activeTags, projectNames]);
+  }, [visible, showHistory, activeTags, projectNames]);
 
   const toggleGroup = (key: string) => {
     setCollapsedGroups((prev) => {
@@ -196,11 +208,17 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
         </div>
       )}
 
-      {all.length === 0 ? (
+      {visible.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <OnApproachIllustration className="h-28 w-40 opacity-90" />
           <p className="text-sm font-medium text-ink-muted">Tower's clear</p>
-          {claudeCheck === "missing" ? (
+          {desktopCount > 0 ? (
+            <p className="max-w-[220px] text-xs text-ink-faint">
+              No terminal sessions yet. {desktopCount} ChatGPT&nbsp;Desktop{" "}
+              {desktopCount === 1 ? "session is" : "sessions are"} hidden — reveal{" "}
+              {desktopCount === 1 ? "it" : "them"} below.
+            </p>
+          ) : claudeCheck === "missing" ? (
             <p className="max-w-[220px] text-xs text-needs-you">
               Couldn't find <code className="rounded bg-surface-hover px-1 py-0.5">claude</code> on your PATH.
               Install the Claude Code CLI, or start a session and it'll appear here.
@@ -298,6 +316,29 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
         </div>
       )}
 
+      {desktopCount > 0 && (
+        <div className="border-t border-border px-2 py-2">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showCodexDesktop}
+            onClick={() => setShowCodexDesktop(!showCodexDesktop)}
+            title={
+              showCodexDesktop
+                ? "Hide Codex sessions from the ChatGPT Desktop app"
+                : "Show Codex sessions from the ChatGPT Desktop app"
+            }
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium text-ink-faint transition-colors duration-150 hover:bg-surface-hover hover:text-ink-muted"
+          >
+            <SwitchTrack on={showCodexDesktop} />
+            <span className="flex-1 truncate">ChatGPT&nbsp;Desktop sessions</span>
+            <span className="shrink-0 tabular-nums text-ink-faint/80">
+              {showCodexDesktop ? "shown" : desktopCount}
+            </span>
+          </button>
+        </div>
+      )}
+
       {contextMenu && sessions[contextMenu.sessionId] && (
         <SessionContextMenu
           session={sessions[contextMenu.sessionId]}
@@ -351,6 +392,27 @@ function ProjectGroupRenameInput({
       data-app-editable
       className="h-7 w-full rounded-md border border-accent/50 bg-app-bg px-2 text-xs font-semibold tracking-wide text-ink uppercase focus:outline-none"
     />
+  );
+}
+
+/** Compact on/off switch. On uses the codex-violet accent (same hue as the
+ *  sidebar's Codex badge), so the control reads as "about Codex". The knob
+ *  slide collapses to an instant move under prefers-reduced-motion via the
+ *  global reset in index.css. */
+function SwitchTrack({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`relative inline-flex h-3.5 w-6 shrink-0 items-center rounded-full transition-colors duration-150 ${
+        on ? "bg-codex" : "bg-surface-hover ring-1 ring-inset ring-border"
+      }`}
+    >
+      <span
+        className={`inline-block h-2.5 w-2.5 rounded-full shadow-sm transition-transform duration-150 ${
+          on ? "translate-x-[11px] bg-app-bg" : "translate-x-0.5 bg-ink-muted"
+        }`}
+      />
+    </span>
   );
 }
 

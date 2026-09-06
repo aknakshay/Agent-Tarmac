@@ -19,6 +19,10 @@ export interface Workspace {
   favorites: string[];
   session_meta: Record<string, WireSessionMetaEntry>;
   project_meta: Record<string, WireProjectMetaEntry>;
+  /** Whether to show Codex sessions written by the ChatGPT Desktop app.
+   * Optional for back-compat with a workspace.json written before it existed
+   * (absent ⇒ false ⇒ Desktop sessions hidden). */
+  show_codex_desktop?: boolean;
 }
 
 /**

@@ -52,6 +52,13 @@ pub struct Workspace {
     /// Same `#[serde(default)]` back-compat pattern as the fields above.
     #[serde(default)]
     pub external_session_ids: Vec<String>,
+    /// Whether to show Codex sessions written by the ChatGPT Desktop app.
+    /// Off by default: Agent Tarmac is a terminal-CLI cockpit, and on a
+    /// machine with Desktop installed those sessions can flood the sidebar
+    /// with conversations the user never runs in a terminal. `#[serde(default)]`
+    /// (⇒ `false`) so an older workspace.json loads with Desktop hidden.
+    #[serde(default)]
+    pub show_codex_desktop: bool,
 }
 
 pub fn load(path: &Path) -> Workspace {

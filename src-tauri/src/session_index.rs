@@ -6,6 +6,11 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+/// The session index across every backend. ChatGPT-Desktop Codex sessions are
+/// included and tagged (`SessionMeta::codex_desktop`); the show/hide-Desktop
+/// policy is applied client-side (see the store's `showCodexDesktop`), so the
+/// toggle re-filters instantly with no rescan and the sidebar can show a count
+/// of what's hidden.
 pub struct SessionIndexState(pub Mutex<Vec<SessionMeta>>);
 
 pub fn claude_projects_dir() -> PathBuf {
