@@ -146,12 +146,13 @@ interface DeckState {
   setExternalIds(ids: string[]): void;
   setSessionExternal(id: string, external: boolean): void;
   /**
-   * Whether ChatGPT-Desktop-app Codex sessions are shown in the sidebar.
-   * Off by default (Agent Tarmac is a terminal-CLI cockpit). Hydrated from
-   * `workspace.show_codex_desktop` and persisted on toggle.
+   * Whether ChatGPT-app Codex sessions (Desktop app, Chrome extension) are
+   * shown in the sidebar, as opposed to only terminal-CLI sessions. Off by
+   * default (Agent Tarmac is a terminal-CLI cockpit). Hydrated from
+   * `workspace.show_codex_app` and persisted on toggle.
    */
-  showCodexDesktop: boolean;
-  setShowCodexDesktop(show: boolean): void;
+  showCodexApp: boolean;
+  setShowCodexApp(show: boolean): void;
 }
 
 export const useDeck = create<DeckState>()((set, get) => ({
@@ -162,7 +163,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
   metaCache: {},
   favoriteIdsCache: [],
   projectNames: {},
-  showCodexDesktop: false,
+  showCodexApp: false,
 
   setSessions: (metas) => {
     const existing = get().sessions;
@@ -194,7 +195,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
         tags: prev?.tags ?? cached?.tags ?? [],
         customTitle: prev?.customTitle ?? cached?.custom_title ?? null,
         backend: meta.backend ?? "claude",
-        codexDesktop: meta.codex_desktop ?? false,
+        codexApp: meta.codex_app ?? false,
       };
     }
     for (const [id, session] of Object.entries(existing)) {
@@ -326,17 +327,17 @@ export const useDeck = create<DeckState>()((set, get) => ({
         metaCache: ws.session_meta,
         favoriteIdsCache: ws.favorites,
         projectNames,
-        showCodexDesktop: ws.show_codex_desktop ?? false,
+        showCodexApp: ws.show_codex_app ?? false,
       };
     });
   },
 
-  setShowCodexDesktop: (show) => {
-    set({ showCodexDesktop: show });
+  setShowCodexApp: (show) => {
+    set({ showCodexApp: show });
     // Persist through the same serialized RMW every other setting uses, so a
     // concurrent favorite/meta write can't clobber it.
-    updateWorkspace((ws) => ({ ...ws, show_codex_desktop: show })).catch((err) =>
-      console.error("Failed to persist show_codex_desktop", err),
+    updateWorkspace((ws) => ({ ...ws, show_codex_app: show })).catch((err) =>
+      console.error("Failed to persist show_codex_app", err),
     );
   },
 

@@ -401,8 +401,8 @@ mod tests {
             .iter()
             .find(|s| s.id == "019f3333-3333-7333-8333-00000000dddd")
             .expect("desktop session is still indexed");
-        assert!(desktop.codex_desktop, "desktop session must be tagged");
-        assert_eq!(all.iter().filter(|s| s.codex_desktop).count(), 1);
+        assert!(desktop.codex_app, "desktop session must be tagged");
+        assert_eq!(all.iter().filter(|s| s.codex_app).count(), 1);
         // Newest-activity first across all four.
         assert!(all
             .windows(2)

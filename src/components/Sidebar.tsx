@@ -36,8 +36,8 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const setCustomTitle = useDeck((state) => state.setCustomTitle);
   const setProjectName = useDeck((state) => state.setProjectName);
   const projectNames = useDeck((state) => state.projectNames);
-  const showCodexDesktop = useDeck((state) => state.showCodexDesktop);
-  const setShowCodexDesktop = useDeck((state) => state.setShowCodexDesktop);
+  const showCodexApp = useDeck((state) => state.showCodexApp);
+  const setShowCodexApp = useDeck((state) => state.setShowCodexApp);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [showHistory, setShowHistory] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
@@ -51,23 +51,23 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
   const [claudeCheck, setClaudeCheck] = useState<"checking" | "missing" | "found">("checking");
 
   const all = useMemo(() => Object.values(sessions), [sessions]);
-  // ChatGPT-Desktop Codex sessions are hidden unless the user opts in; `all`
-  // still holds them so the toggle can report how many are hidden and reveal
-  // them instantly (no rescan).
-  const desktopCount = useMemo(() => all.filter((s) => s.codexDesktop).length, [all]);
+  // ChatGPT-app Codex sessions (Desktop app, Chrome extension) are hidden
+  // unless the user opts in; `all` still holds them so the toggle can report
+  // how many are hidden and reveal them instantly (no rescan).
+  const appCount = useMemo(() => all.filter((s) => s.codexApp).length, [all]);
   const visible = useMemo(
-    () => (showCodexDesktop ? all : all.filter((s) => !s.codexDesktop)),
-    [all, showCodexDesktop],
+    () => (showCodexApp ? all : all.filter((s) => !s.codexApp)),
+    [all, showCodexApp],
   );
 
   useEffect(() => {
     // Only probe for `claude` when there's genuinely nothing to show — not
-    // when the only sessions are hidden Desktop ones (the toggle covers that).
-    if (visible.length > 0 || desktopCount > 0) return;
+    // when the only sessions are hidden ChatGPT-app ones (the toggle covers it).
+    if (visible.length > 0 || appCount > 0) return;
     invoke<string | null>("check_claude")
       .then((version) => setClaudeCheck(version ? "found" : "missing"))
       .catch(() => setClaudeCheck("missing"));
-  }, [visible.length, desktopCount]);
+  }, [visible.length, appCount]);
 
   const allTags = useMemo(() => {
     const set = new Set<string>();
@@ -212,11 +212,11 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <OnApproachIllustration className="h-28 w-40 opacity-90" />
           <p className="text-sm font-medium text-ink-muted">Tower's clear</p>
-          {desktopCount > 0 ? (
+          {appCount > 0 ? (
             <p className="max-w-[220px] text-xs text-ink-faint">
-              No terminal sessions yet. {desktopCount} ChatGPT&nbsp;Desktop{" "}
-              {desktopCount === 1 ? "session is" : "sessions are"} hidden — reveal{" "}
-              {desktopCount === 1 ? "it" : "them"} below.
+              No terminal sessions yet. {appCount} ChatGPT&nbsp;Codex{" "}
+              {appCount === 1 ? "session is" : "sessions are"} hidden — reveal{" "}
+              {appCount === 1 ? "it" : "them"} below.
             </p>
           ) : claudeCheck === "missing" ? (
             <p className="max-w-[220px] text-xs text-needs-you">
@@ -316,24 +316,24 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
         </div>
       )}
 
-      {desktopCount > 0 && (
+      {appCount > 0 && (
         <div className="border-t border-border px-2 py-2">
           <button
             type="button"
             role="switch"
-            aria-checked={showCodexDesktop}
-            onClick={() => setShowCodexDesktop(!showCodexDesktop)}
+            aria-checked={showCodexApp}
+            onClick={() => setShowCodexApp(!showCodexApp)}
             title={
-              showCodexDesktop
-                ? "Hide Codex sessions from the ChatGPT Desktop app"
-                : "Show Codex sessions from the ChatGPT Desktop app"
+              showCodexApp
+                ? "Hide Codex sessions from the ChatGPT apps (Desktop, Chrome extension)"
+                : "Show Codex sessions from the ChatGPT apps (Desktop, Chrome extension)"
             }
             className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-medium text-ink-faint transition-colors duration-150 hover:bg-surface-hover hover:text-ink-muted"
           >
-            <SwitchTrack on={showCodexDesktop} />
-            <span className="flex-1 truncate">ChatGPT&nbsp;Desktop sessions</span>
+            <SwitchTrack on={showCodexApp} />
+            <span className="flex-1 truncate">ChatGPT&nbsp;Codex sessions</span>
             <span className="shrink-0 tabular-nums text-ink-faint/80">
-              {showCodexDesktop ? "shown" : desktopCount}
+              {showCodexApp ? "shown" : appCount}
             </span>
           </button>
         </div>

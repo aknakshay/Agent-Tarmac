@@ -15,12 +15,14 @@ pub struct SessionMeta {
     /// logic to the right [`crate::backend::SessionBackend`].
     #[serde(default)]
     pub backend: BackendKind,
-    /// True only for a Codex session written by the ChatGPT Desktop app (see
-    /// `codex::is_desktop_originator`). The index carries every session, but
-    /// the UI hides these unless the "show ChatGPT Desktop sessions" setting is
-    /// on — Agent Tarmac is a terminal-CLI cockpit. Always false for Claude.
+    /// True only for a Codex session from a ChatGPT **app** surface — the
+    /// Desktop app or the Chrome extension side panel, as opposed to the
+    /// terminal `codex` CLI (see `codex::is_codex_app_originator`). The index
+    /// carries every session, but the UI hides these unless the "show ChatGPT
+    /// Codex sessions" setting is on — Agent Tarmac is a terminal-CLI cockpit.
+    /// Always false for Claude.
     #[serde(default)]
-    pub codex_desktop: bool,
+    pub codex_app: bool,
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -87,7 +89,7 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
         last_activity: last_ts.unwrap_or(mtime),
         last_role,
         backend: BackendKind::Claude,
-        codex_desktop: false,
+        codex_app: false,
     })
 }
 

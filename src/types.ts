@@ -15,9 +15,10 @@ export interface Session {
   /** Owning agent CLI. Optional/undefined is treated as "claude" (the default
    * and the shape of pre-backend sessions), so only Codex gets a badge. */
   backend?: BackendKind;
-  /** True only for a Codex session written by the ChatGPT Desktop app. Hidden
-   * from the sidebar unless the "show ChatGPT Desktop sessions" toggle is on. */
-  codexDesktop?: boolean;
+  /** True only for a Codex session from a ChatGPT app (Desktop app or Chrome
+   * extension), as opposed to the terminal CLI. Hidden from the sidebar unless
+   * the "show ChatGPT Codex sessions" toggle is on. */
+  codexApp?: boolean;
 }
 
 /** Which agent CLI owns a session. Mirrors the Rust `BackendKind` enum. */
@@ -33,8 +34,9 @@ export interface SessionMeta {
   /** Owning backend; optional for back-compat with pre-backend transcripts
    * (defaults to "claude" on the Rust side). */
   backend?: BackendKind;
-  /** Whether this Codex session was written by the ChatGPT Desktop app. */
-  codex_desktop?: boolean;
+  /** Whether this Codex session came from a ChatGPT app (Desktop / Chrome
+   * extension) rather than the terminal CLI. */
+  codex_app?: boolean;
 }
 
 export interface StatusChange {

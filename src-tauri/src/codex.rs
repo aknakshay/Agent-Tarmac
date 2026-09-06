@@ -168,29 +168,36 @@ fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
-/// Whether a `session_meta.payload.originator` marks a session as belonging to
-/// the ChatGPT Desktop app rather than the standalone `codex` CLI.
+/// Whether a `session_meta.payload.originator` marks a session as coming from
+/// a ChatGPT **app** surface (Desktop app, Chrome extension side panel, …)
+/// rather than the standalone terminal `codex` CLI.
 ///
 /// Agent Tarmac is a terminal-CLI cockpit: it manages sessions a user runs (or
-/// would resume) in a terminal, not the ambient conversations the ChatGPT
-/// Desktop app writes to the same `~/.codex/sessions`. On a machine with
-/// Desktop installed those Desktop rollouts vastly outnumber CLI ones (254 vs
-/// 0 on the author's machine), so surfacing them floods the sidebar with rows
-/// the user never manages here. We therefore hide Desktop sessions in v0.4.0.
+/// would resume) in a terminal, not the ambient conversations the ChatGPT apps
+/// write to the same `~/.codex/sessions`. On a machine with those apps
+/// installed their rollouts vastly outnumber CLI ones (254 vs 0 on the author's
+/// machine), so surfacing them floods the sidebar with rows the user never
+/// manages here.
 ///
-/// A **denylist** ("contains `desktop`", case-insensitively) rather than a CLI
-/// allowlist: real values seen in the wild are `"Codex Desktop"` (207) and
-/// `"codex_work_desktop"` (45); an unknown *CLI* originator should still show,
-/// so only an explicit desktop marker tags a session as Desktop. Missing
-/// originator ⇒ not Desktop (fail-open toward showing).
+/// A **denylist** — case-insensitively contains any of `desktop`, `chrome`,
+/// `extension`, `sidepanel` — rather than a CLI allowlist, so an unknown *CLI*
+/// originator still shows (fail-open toward showing; missing originator ⇒ CLI).
+/// Real values seen in the wild: `"Codex Desktop"` (207) and
+/// `"codex_work_desktop"` (45) → `desktop`; `"codex-chrome-extension-sidepanel"`
+/// (2) → `chrome`/`extension`/`sidepanel`. The standalone CLI writes
+/// `codex_cli_rs` / `codex-cli` / `codex-tui` / `codex_exec` (confirmed against
+/// the codex 0.153.4 binary's originator vocabulary) — none match, so CLI
+/// sessions always show. (`codex_vscode` and `codex-app-server` also appear in
+/// that vocabulary as further app surfaces; they aren't on this machine and are
+/// left showing for now — extend the denylist if they should hide too.)
 ///
-/// This only *tags* the session (`SessionMeta::codex_desktop`); the hide/show
+/// This only *tags* the session (`SessionMeta::codex_app`); the hide/show
 /// policy lives at the UI boundary and is user-controllable via the
-/// `Workspace::show_codex_desktop` setting (off by default). The
-/// chrome-extension originator (`codex-chrome-extension-sidepanel`) does not
-/// contain "desktop", so it is treated as non-Desktop and shown.
-fn is_desktop_originator(originator: &str) -> bool {
-    originator.to_ascii_lowercase().contains("desktop")
+/// `Workspace::show_codex_app` setting (off by default).
+fn is_codex_app_originator(originator: &str) -> bool {
+    const APP_MARKERS: &[&str] = &["desktop", "chrome", "extension", "sidepanel"];
+    let lower = originator.to_ascii_lowercase();
+    APP_MARKERS.iter().any(|m| lower.contains(m))
 }
 
 /// Parse one Codex rollout file into a [`SessionMeta`] tagged
@@ -226,7 +233,7 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
     let mut title: Option<String> = None;
     let mut last_ts: Option<DateTime<Utc>> = None;
     let mut last_role: Option<String> = None;
-    let mut codex_desktop = false;
+    let mut codex_app = false;
 
     for line in content.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -236,11 +243,11 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
         match v.get("type").and_then(|t| t.as_str()) {
             Some("session_meta") => {
                 if let Some(p) = payload {
-                    // Tag ChatGPT-Desktop-app sessions (see
-                    // `is_desktop_originator`). The session is still indexed;
-                    // the UI hides it unless "show Desktop sessions" is on.
+                    // Tag ChatGPT-app sessions (Desktop / Chrome extension; see
+                    // `is_codex_app_originator`). The session is still indexed;
+                    // the UI hides it unless "show ChatGPT Codex sessions" is on.
                     if let Some(orig) = p.get("originator").and_then(|x| x.as_str()) {
-                        codex_desktop = is_desktop_originator(orig);
+                        codex_app = is_codex_app_originator(orig);
                     }
                     if id.is_none() {
                         id = p.get("id").and_then(|x| x.as_str()).map(String::from);
@@ -296,7 +303,7 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
         last_activity,
         last_role,
         backend: BackendKind::Codex,
-        codex_desktop,
+        codex_app,
     })
 }
 
@@ -418,8 +425,8 @@ mod tests {
     fn transcript_files_walks_date_shards_and_skips_non_rollouts() {
         let files = transcript_files(&fixtures_root());
         // Discovery is originator-blind — it finds every rollout file (the
-        // desktop-originated one included); the desktop *skip* happens later
-        // in parse_transcript. The decoy `notes.jsonl` is not a rollout.
+        // ChatGPT-app one included); parse_transcript *tags* it (codex_app),
+        // and the UI hides it. The decoy `notes.jsonl` is not a rollout.
         assert_eq!(files.len(), 4, "found: {files:?}");
         assert!(files.iter().all(|p| is_rollout_file(p)));
         for shard in ["2026/09/06", "2026/08/15", "2026/09/05", "2026/09/07"] {
@@ -482,31 +489,35 @@ mod tests {
     }
 
     #[test]
-    fn desktop_originator_session_is_tagged_not_dropped() {
-        // A ChatGPT-Desktop rollout is still parsed and indexed, but tagged
-        // codex_desktop=true so the UI can hide it unless the user opts in.
+    fn app_originator_session_is_tagged_not_dropped() {
+        // A ChatGPT-app rollout is still parsed and indexed, but tagged
+        // codex_app=true so the UI can hide it unless the user opts in.
         let m = parse_transcript(&fixture_desktop()).unwrap();
-        assert!(m.codex_desktop, "Codex Desktop session must be tagged");
+        assert!(m.codex_app, "ChatGPT-app Codex session must be tagged");
         assert_eq!(m.id, "019f3333-3333-7333-8333-00000000dddd");
     }
 
     #[test]
-    fn cli_originator_session_is_not_tagged_desktop() {
-        // The re-originated fixtures ("codex_cli") must NOT be tagged desktop.
-        assert!(!parse_transcript(&fixture_a()).unwrap().codex_desktop);
+    fn cli_originator_session_is_not_tagged_app() {
+        // The re-originated fixtures ("codex_cli") must NOT be tagged as an app
+        // session — a terminal CLI originator always shows.
+        assert!(!parse_transcript(&fixture_a()).unwrap().codex_app);
     }
 
     #[test]
-    fn is_desktop_originator_denies_desktop_keeps_cli() {
-        // Real values observed across 254 rollouts.
-        assert!(is_desktop_originator("Codex Desktop"));
-        assert!(is_desktop_originator("codex_work_desktop"));
-        assert!(is_desktop_originator("CODEX DESKTOP")); // case-insensitive
-                                                         // Non-desktop originators are kept (denylist, not allowlist), so an
-                                                         // unknown CLI-side originator still shows.
-        assert!(!is_desktop_originator("codex_cli"));
-        assert!(!is_desktop_originator("codex-chrome-extension-sidepanel"));
-        assert!(!is_desktop_originator(""));
+    fn is_codex_app_originator_denies_app_surfaces_keeps_cli() {
+        // App surfaces observed across the 254 real rollouts — all hidden.
+        assert!(is_codex_app_originator("Codex Desktop")); // 207
+        assert!(is_codex_app_originator("codex_work_desktop")); // 45
+        assert!(is_codex_app_originator("codex-chrome-extension-sidepanel")); // 2
+        assert!(is_codex_app_originator("CODEX DESKTOP")); // case-insensitive
+                                                           // Standalone terminal CLI originators (from the codex 0.153.4 binary's
+                                                           // vocabulary) — always shown; the denylist is fail-open.
+        assert!(!is_codex_app_originator("codex_cli_rs"));
+        assert!(!is_codex_app_originator("codex-cli"));
+        assert!(!is_codex_app_originator("codex-tui"));
+        assert!(!is_codex_app_originator("codex_exec"));
+        assert!(!is_codex_app_originator("")); // missing ⇒ shown
     }
 
     #[test]
