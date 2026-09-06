@@ -511,8 +511,16 @@ mod tests {
         assert!(is_codex_app_originator("codex_work_desktop")); // 45
         assert!(is_codex_app_originator("codex-chrome-extension-sidepanel")); // 2
         assert!(is_codex_app_originator("CODEX DESKTOP")); // case-insensitive
-                                                           // Standalone terminal CLI originators (from the codex 0.153.4 binary's
-                                                           // vocabulary) — always shown; the denylist is fail-open.
+
+        // Each denylist keyword triggers on its own, so a future originator
+        // that carries only one of them is still hidden.
+        assert!(is_codex_app_originator("codex_desktop"));
+        assert!(is_codex_app_originator("codex_chrome"));
+        assert!(is_codex_app_originator("some_extension_host"));
+        assert!(is_codex_app_originator("codex_sidepanel"));
+
+        // Standalone terminal CLI originators (from the codex 0.153.4 binary's
+        // vocabulary) — always shown; the denylist is fail-open.
         assert!(!is_codex_app_originator("codex_cli_rs"));
         assert!(!is_codex_app_originator("codex-cli"));
         assert!(!is_codex_app_originator("codex-tui"));
