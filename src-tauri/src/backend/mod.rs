@@ -89,6 +89,32 @@ pub trait SessionBackend: Send + Sync {
     /// The `(program, args)` to spawn a fresh session (no id yet).
     fn start_argv(&self) -> (String, Vec<String>);
 
+    /// The bare CLI binary name (`claude`, `codex`) — the process name a
+    /// popped-out `resume` runs under. Used to build [`external_resume_pattern`]
+    /// independent of wherever the binary is installed.
+    ///
+    /// [`external_resume_pattern`]: SessionBackend::external_resume_pattern
+    fn bin_name(&self) -> &'static str;
+
+    /// The `pgrep -f` substring that matches a popped-out (external) resume
+    /// process for `session_id` — what `pop_out` uses to find and SIGTERM the
+    /// external terminal's CLI. Derived from [`resume_argv`] so it can never
+    /// drift from the command line the pop-out script actually `exec`s: the
+    /// bare [`bin_name`] followed by the resume args (Claude
+    /// `claude --resume <id>`; Codex `codex resume <id>`). The resolved binary
+    /// path is deliberately dropped — `pgrep -f` matches a substring, and the
+    /// bare name matches regardless of install location.
+    ///
+    /// [`resume_argv`]: SessionBackend::resume_argv
+    /// [`bin_name`]: SessionBackend::bin_name
+    fn external_resume_pattern(&self, session_id: &str) -> String {
+        let (_program, args) = self.resume_argv(session_id);
+        let mut parts = Vec::with_capacity(args.len() + 1);
+        parts.push(self.bin_name().to_string());
+        parts.extend(args);
+        parts.join(" ")
+    }
+
     /// Resolve the backend CLI binary to an absolute path (or the bare name,
     /// as a last resort, when every probe fails).
     fn resolve_binary(&self) -> String;
@@ -166,6 +192,10 @@ impl SessionBackend for ClaudeBackend {
         (self.resolve_binary(), vec![])
     }
 
+    fn bin_name(&self) -> &'static str {
+        "claude"
+    }
+
     fn resolve_binary(&self) -> String {
         crate::claude_bin::claude_program()
     }
@@ -191,8 +221,13 @@ impl SessionBackend for ClaudeBackend {
 /// into the Codex seam modules (`codex`, `codex_bin`); the Codex-specific
 /// on-disk topology, envelope parse, and token-usage shape all live there.
 ///
-/// The resume/start argv here are **unverified against a live `codex` binary**
-/// (none was installed when this was written) — task 3 runtime-verifies them.
+/// Resume/start argv are **verified against live `codex` 0.153.4** (task 3):
+/// `codex resume <id>` attaches under a PTY and renders "Resuming session…"
+/// for the rollout whose `session_meta.payload.id` equals `<id>` — including
+/// ChatGPT-Desktop-written rollouts, resumed by the standalone CLI at the same
+/// version. `codex resume` launches in the *process* cwd (it does not restore
+/// the rollout's stored cwd), so callers must spawn with the session's cwd set
+/// (both `resume_session`'s `SpawnSpec.cwd` and the pop-out `cd` do this).
 pub struct CodexBackend;
 
 impl SessionBackend for CodexBackend {
@@ -216,7 +251,7 @@ impl SessionBackend for CodexBackend {
 
     fn resume_argv(&self, session_id: &str) -> (String, Vec<String>) {
         // Codex resume is a SUBCOMMAND (`codex resume <id>`), not a `--flag`.
-        // Unverified against a live binary — see the struct doc.
+        // Verified against live codex 0.153.4 — see the struct doc.
         (
             self.resolve_binary(),
             vec!["resume".to_string(), session_id.to_string()],
@@ -224,9 +259,13 @@ impl SessionBackend for CodexBackend {
     }
 
     fn start_argv(&self) -> (String, Vec<String>) {
-        // Bare `codex` opens a fresh interactive session. Unverified against a
-        // live binary.
+        // Bare `codex` opens a fresh interactive session. Verified against
+        // codex 0.153.4 (task 3).
         (self.resolve_binary(), vec![])
+    }
+
+    fn bin_name(&self) -> &'static str {
+        "codex"
     }
 
     fn resolve_binary(&self) -> String {
@@ -322,6 +361,33 @@ mod tests {
     fn codex_start_argv_is_bare() {
         let (_program, args) = CODEX.start_argv();
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn claude_external_resume_pattern_matches_pop_out_process() {
+        // The pop-out script `exec`s `<path>/claude --resume <id>`; the pgrep
+        // pattern must be a substring of that running command line.
+        assert_eq!(
+            CLAUDE.external_resume_pattern("abc-123"),
+            "claude --resume abc-123"
+        );
+    }
+
+    #[test]
+    fn codex_external_resume_pattern_uses_resume_subcommand() {
+        // Codex runs `<path>/codex resume <id>` — the pgrep pattern is the
+        // subcommand form, distinct enough from Claude's that the two can't
+        // cross-match (the uuid alone rules out collision).
+        assert_eq!(
+            CODEX.external_resume_pattern("abc-123"),
+            "codex resume abc-123"
+        );
+    }
+
+    #[test]
+    fn bin_names_are_distinct() {
+        assert_eq!(CLAUDE.bin_name(), "claude");
+        assert_eq!(CODEX.bin_name(), "codex");
     }
 
     #[test]
