@@ -1,9 +1,9 @@
 use crate::backend::BackendKind;
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionMeta {
     pub id: String,
     pub cwd: Option<String>,
@@ -46,10 +46,14 @@ fn extract_user_text(v: &serde_json::Value) -> Option<String> {
 
 pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
     let id = path.file_stem()?.to_str()?.to_string();
-    let content = std::fs::read_to_string(path).ok()?;
+    // Read only the file edges: `cwd`/`summary`/first user turn live in the
+    // head, `last_activity`/`last_role` in the tail. For every small fixture
+    // the window covers the whole file, so this walks the exact same lines a
+    // full read would and the extracted meta is identical. See `bounded_read`.
+    let chunks = crate::bounded_read::read_head_tail(path)?;
     let (mut cwd, mut summary, mut first_user, mut last_ts, mut last_role) =
         (None, None, None, None, None);
-    for line in content.lines() {
+    for line in chunks.lines() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
@@ -117,6 +121,59 @@ mod tests {
     #[test]
     fn missing_file_returns_none() {
         assert!(parse_transcript(std::path::Path::new("/nope/x.jsonl")).is_none());
+    }
+
+    #[test]
+    fn large_file_parses_edges_without_reading_middle() {
+        use std::io::Write;
+        // Head (first 128 KB): real cwd + summary + first user turn, then benign
+        // pad. Deep middle: a valid `summary` line that — since `summary`
+        // overwrites on every occurrence — WOULD win the title if the middle
+        // were read. Tail (last 64 KB): benign pad + the final assistant record.
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("big.jsonl");
+        let mut f = std::fs::File::create(&p).unwrap();
+        let pad = format!(r#"{{"pad":"{}"}}"#, "p".repeat(200));
+        let mut written = 0u64;
+        let w = |f: &mut std::fs::File, line: &str| {
+            writeln!(f, "{line}").unwrap();
+            line.len() as u64 + 1
+        };
+        written += w(
+            &mut f,
+            r#"{"type":"summary","summary":"Real Title","cwd":"/Users/me/proj"}"#,
+        );
+        written += w(
+            &mut f,
+            r#"{"type":"user","timestamp":"2026-09-01T00:00:00Z","message":{"content":"hi"}}"#,
+        );
+        // Pad past the head window so the poison lands in the untouched middle.
+        let head_target = written + 160 * 1024;
+        while written < head_target {
+            written += w(&mut f, &pad);
+        }
+        written += w(
+            &mut f,
+            r#"{"type":"summary","summary":"WRONG-FROM-MIDDLE"}"#,
+        );
+        // Pad past the tail window so the poison also clears the tail.
+        let tail_target = written + 96 * 1024;
+        while written < tail_target {
+            written += w(&mut f, &pad);
+        }
+        w(
+            &mut f,
+            r#"{"type":"assistant","timestamp":"2026-09-06T10:00:05Z","message":{"content":"done"}}"#,
+        );
+        f.flush().unwrap();
+        drop(f);
+
+        let m = parse_transcript(&p).unwrap();
+        // Head summary wins — the middle poison summary was never read.
+        assert_eq!(m.title, "Real Title");
+        // Tail record supplies last_role + last_activity.
+        assert_eq!(m.last_role.as_deref(), Some("assistant"));
+        assert_eq!(m.last_activity.to_rfc3339(), "2026-09-06T10:00:05+00:00");
     }
 
     #[test]

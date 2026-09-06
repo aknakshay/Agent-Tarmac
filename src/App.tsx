@@ -9,6 +9,7 @@ import { NewSessionDialog } from "./components/NewSessionDialog";
 import { RestoreBanner } from "./components/RestoreBanner";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Home } from "./components/Home";
+import { SplashScreen } from "./components/SplashScreen";
 import { writeExited, writeOutput } from "./terminals";
 import type { SessionMeta, StatusChange } from "./types";
 import type { Workspace } from "./lib/workspaceMeta";
@@ -34,6 +35,19 @@ function App() {
 
   const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+
+  // The launch splash plays once per app launch, as a full-viewport overlay
+  // above the already-mounted app. Startup is instant now (the scan fills the
+  // sidebar in the background), so the splash isn't gated on any load — its
+  // ~1.8s takeoff is purely the launch moment, and it naturally outlasts the
+  // fast scan. `splashLifting` runs a brief opacity fade as it unmounts so the
+  // app is revealed beneath rather than snapping in.
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashLifting, setSplashLifting] = useState(false);
+  const handleSplashComplete = () => {
+    setSplashLifting(true);
+    window.setTimeout(() => setShowSplash(false), 420);
+  };
 
   // Global shortcuts. Attached at window level with capture:true so they
   // fire even while the xterm terminal has focus: xterm's own keydown
@@ -107,15 +121,21 @@ function App() {
   }, [commandBarOpen, newSessionOpen, openIds, focus, goHome, activeId, toggleMarkedUnread]);
 
   useEffect(() => {
-    invoke<SessionMeta[]>("list_sessions")
-      .then(setSessions)
-      // Hydrate persisted read/unread, tags, and rename metadata once the
-      // session index has landed, so hydrateMeta has known sessions to
-      // merge into (a session_meta entry for an id nobody's scanned yet is
-      // simply skipped — see store.ts).
-      .then(() => invoke<Workspace>("get_workspace"))
+    // The session list now arrives via the `sessions_updated` event from the
+    // non-blocking startup scan: the backend index starts EMPTY (lib.rs) and a
+    // background thread fills it off the UI thread — first from the persisted
+    // cache (instant), then from a fresh disk reconcile. So we no longer call
+    // `list_sessions` here (it would return the still-empty index and flip
+    // `sessionsLoaded` before any session had loaded, which made RestoreBanner
+    // evaluate — and clear — live ids against an empty set).
+    //
+    // We only prime the persisted read/unread, tags, favorites, and rename
+    // caches so the first `sessions_updated` batch paints with them already
+    // applied; `hydrateMeta` also back-fills a batch that happened to land
+    // first (it merges into whatever sessions are present — see store.ts).
+    invoke<Workspace>("get_workspace")
       .then(hydrateMeta)
-      .catch((err) => console.error("Failed to load sessions", err));
+      .catch((err) => console.error("Failed to load workspace meta", err));
 
     // One-time probe for installed terminals (Ghostty, iTerm2, ...) so the
     // pop-out control can offer real choices and label itself truthfully.
@@ -135,6 +155,16 @@ function App() {
     const sessionsUpdated = listen<SessionMeta[]>("sessions_updated", (event) =>
       setSessions(event.payload),
     );
+    // The background startup scan brackets its fresh disk reconcile with these
+    // two events; the store turns them into the `scanning`/`scanCount` that
+    // drives the sidebar's climbing-jet loader (see Sidebar.tsx). Same
+    // StrictMode-safe promise-cleanup pattern as the listeners around it.
+    const scanStarted = listen<{ cached: number }>("scan_started", (event) =>
+      useDeck.getState().startScan(event.payload.cached),
+    );
+    const scanComplete = listen<{ count: number }>("scan_complete", (event) =>
+      useDeck.getState().completeScan(event.payload.count),
+    );
     const statusChanged = listen<StatusChange>("session_status_changed", (event) =>
       setStatus(event.payload.sessionId, event.payload.status),
     );
@@ -149,6 +179,8 @@ function App() {
 
     return () => {
       sessionsUpdated.then((unlisten) => unlisten());
+      scanStarted.then((unlisten) => unlisten());
+      scanComplete.then((unlisten) => unlisten());
       statusChanged.then((unlisten) => unlisten());
       ptyOutput.then((unlisten) => unlisten());
       ptyExited.then((unlisten) => unlisten());
@@ -198,6 +230,12 @@ function App() {
             setNewSessionOpen(false);
           }}
         />
+      )}
+
+      {showSplash && (
+        <div className="splash-overlay" data-lifting={splashLifting ? "true" : undefined}>
+          <SplashScreen onComplete={handleSplashComplete} />
+        </div>
       )}
     </div>
   );

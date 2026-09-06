@@ -62,12 +62,22 @@ export function Home() {
   }, []);
 
   const [tokens, setTokens] = useState<TokenStats>(EMPTY_TOKEN_STATS);
+  // On a cold token cache the first `fetchTokenStats` invoke can take up to
+  // ~35s to resolve (the Rust-side compute), during which `tokens` is still the
+  // zeroed default. This flag lets the headline show a quiet "computing…"
+  // affordance instead of a bare 0, so a real zero (loaded) reads differently
+  // from not-computed-yet. Only the first load is uncomputed; the 30s poll
+  // afterward just refreshes an already-loaded number.
+  const [tokensLoaded, setTokensLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
       fetchTokenStats()
         .then((next) => {
-          if (!cancelled) setTokens(next);
+          if (!cancelled) {
+            setTokens(next);
+            setTokensLoaded(true);
+          }
         })
         .catch(() => {
           // token_stats() never errors on the Rust side (missing dir just
@@ -191,7 +201,13 @@ export function Home() {
 
         <RunwayDivider />
 
-        <TokensSection tokens={tokens} snapshotBase={snapshotBase} sharing={sharing} onShare={handleShare} />
+        <TokensSection
+          tokens={tokens}
+          tokensLoaded={tokensLoaded}
+          snapshotBase={snapshotBase}
+          sharing={sharing}
+          onShare={handleShare}
+        />
 
         <footer className="flex items-center justify-center gap-1.5 pt-2 text-xs text-ink-faint">
           <span>Agent Tarmac{version ? ` v${version}` : ""}</span>
@@ -226,11 +242,13 @@ export function Home() {
  */
 function TokensSection({
   tokens,
+  tokensLoaded,
   snapshotBase,
   sharing,
   onShare,
 }: {
   tokens: TokenStats;
+  tokensLoaded: boolean;
   snapshotBase: Omit<SnapshotData, "now">;
   sharing: boolean;
   onShare: () => void;
@@ -250,14 +268,34 @@ function TokensSection({
           {sharing ? "Rendering…" : "Share snapshot"}
         </button>
       </div>
-      <div className="flex items-baseline gap-2">
-        <span className="text-4xl font-semibold tabular-nums text-ink">{formatTokenCount(tokens.todayOutput)}</span>
-        <span className="text-xs text-ink-faint">tokens out today</span>
-      </div>
-      <p className="text-xs text-ink-faint">
-        {formatTokenCount(tokens.todayInput)} in · {formatTokenCount(tokens.todayCacheRead)} cache read
-      </p>
-      <p className="text-xs text-ink-faint">{formatTokenCount(allTime)} all-time</p>
+      {tokensLoaded ? (
+        <>
+          <div className="flex items-baseline gap-2">
+            <span className="text-4xl font-semibold tabular-nums text-ink">{formatTokenCount(tokens.todayOutput)}</span>
+            <span className="text-xs text-ink-faint">tokens out today</span>
+          </div>
+          <p className="text-xs text-ink-faint">
+            {formatTokenCount(tokens.todayInput)} in · {formatTokenCount(tokens.todayCacheRead)} cache read
+          </p>
+          <p className="text-xs text-ink-faint">{formatTokenCount(allTime)} all-time</p>
+        </>
+      ) : (
+        // Cold cache: the invoke is still computing the counts (up to ~35s).
+        // A quiet shimmer stands in for the headline so it doesn't read as a
+        // real zero — this is a background calc, not an error, so keep it calm.
+        <>
+          <div className="flex items-baseline gap-2">
+            <span
+              className="animate-pulse text-4xl font-semibold text-ink-faint/70"
+              aria-hidden="true"
+            >
+              ·····
+            </span>
+            <span className="text-xs text-ink-faint">tallying tokens out today…</span>
+          </div>
+          <p className="text-xs text-ink-faint">reading local session logs</p>
+        </>
+      )}
       <SnapshotPreview data={snapshotBase} sharing={sharing} onShare={onShare} />
     </section>
   );

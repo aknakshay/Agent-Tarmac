@@ -1,0 +1,206 @@
+/*
+  SidebarLoading — the launch continued, sized for the ~280px session
+  column. The shared dart (jetMark.tsx) climbs in place while the runway
+  centerline and thin cloud wisps stream DOWN past it (vertical motion
+  suits the narrow column) with the afterburner lit, looping.
+
+  Transform/opacity only. Reduced-motion resting frame at the bottom.
+  Palette is tokens-only; the flame colors live in jetMark.css.
+*/
+
+.jls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem 1rem 1.75rem;
+  user-select: none;
+}
+
+/* ---- Sky: the vertical column the jet climbs through. --------------- */
+.jls__sky {
+  position: relative;
+  width: 100%;
+  max-width: 180px;
+  height: 168px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: radial-gradient(
+    120% 70% at 50% 20%,
+    color-mix(in oklab, var(--color-accent) 12%, transparent),
+    transparent 68%
+  );
+  /* Fade the top and bottom edges so streaming elements enter/leave
+     softly rather than popping at a hard border. */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 1) 14%,
+    rgba(0, 0, 0, 1) 82%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgba(0, 0, 0, 1) 14%,
+    rgba(0, 0, 0, 1) 82%,
+    transparent 100%
+  );
+}
+
+/* Centerline dashes, streaming down = the jet is climbing up past them. */
+.jls__stripes {
+  position: absolute;
+  left: 50%;
+  top: -40px;
+  width: 6px;
+  height: calc(100% + 80px);
+  transform: translateX(-50%) translateY(0);
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--color-ink-faint) 0 12px,
+    transparent 12px 40px
+  );
+  opacity: 0.55;
+  animation: jls-fall 0.9s linear infinite;
+}
+
+/* Thin cloud wisps drifting down at three offsets/speeds for parallax. */
+.jls__wisp {
+  position: absolute;
+  left: 50%;
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--color-ink-faint);
+  opacity: 0.18;
+  filter: blur(1px);
+}
+.jls__wisp--a {
+  width: 46px;
+  transform: translateX(-130%);
+  animation: jls-fall-wisp 2.6s linear infinite;
+}
+.jls__wisp--b {
+  width: 30px;
+  transform: translateX(70%);
+  animation: jls-fall-wisp 3.6s linear infinite 0.8s;
+}
+.jls__wisp--c {
+  width: 38px;
+  transform: translateX(-50%);
+  animation: jls-fall-wisp 4.4s linear infinite 1.9s;
+}
+
+/* ---- The dart, climbing. -------------------------------------------- */
+.jls__jet {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 74px;
+  height: 74px;
+  transform: translate(-50%, -50%);
+  animation: jls-climb 3s ease-in-out infinite;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.5));
+}
+.jls__mark {
+  width: 100%;
+  height: 100%;
+}
+.jls__mark .jetmark__flame {
+  animation: jetmark-flicker 0.85s ease-in-out infinite;
+}
+
+/* ---- Caption -------------------------------------------------------- */
+.jls__caption {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 0.8125rem;
+  line-height: 1.25;
+  color: var(--color-ink);
+  text-align: center;
+}
+.jls__count {
+  font-size: 0.75rem;
+  color: var(--color-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Done: settle the climb, resolve the caption. ------------------- */
+.jls[data-phase="done"] .jls__jet {
+  animation-duration: 6s;
+}
+.jls[data-phase="done"] .jls__stripes {
+  animation-duration: 1.8s;
+  opacity: 0.32;
+}
+.jls[data-phase="done"] .jls__mark .jetmark__dart {
+  fill: var(--color-working);
+  transition: fill 260ms ease-out;
+}
+
+/* ---- Keyframes ------------------------------------------------------ */
+
+@keyframes jls-fall {
+  from {
+    transform: translateX(-50%) translateY(0);
+  }
+  to {
+    /* One dash tile = 40px; loops seamlessly. */
+    transform: translateX(-50%) translateY(40px);
+  }
+}
+
+@keyframes jls-fall-wisp {
+  from {
+    top: -8px;
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.2;
+  }
+  88% {
+    opacity: 0.2;
+  }
+  to {
+    top: 172px;
+    opacity: 0;
+  }
+}
+
+@keyframes jls-climb {
+  0%,
+  100% {
+    transform: translate(-50%, calc(-50% + 3px)) rotate(-0.8deg);
+  }
+  50% {
+    transform: translate(-50%, calc(-50% - 3px)) rotate(0.8deg);
+  }
+}
+
+/* ---- Reduced motion: static climbing jet, still sky. ---------------- */
+@media (prefers-reduced-motion: reduce) {
+  .jls__stripes,
+  .jls__wisp,
+  .jls__jet,
+  .jls__mark .jetmark__flame,
+  .jls[data-phase="done"] .jls__jet,
+  .jls[data-phase="done"] .jls__stripes {
+    animation: none !important;
+  }
+  .jls__stripes {
+    transform: translateX(-50%) translateY(0);
+  }
+  .jls__wisp {
+    display: none;
+  }
+  .jls__jet {
+    transform: translate(-50%, -50%);
+  }
+  .jls__mark .jetmark__flame {
+    transform: scaleY(0.9);
+    opacity: 0.75;
+  }
+}
