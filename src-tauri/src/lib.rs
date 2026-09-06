@@ -4,6 +4,7 @@ pub mod pop_out;
 pub mod pty_manager;
 pub mod session_index;
 pub mod status_loop;
+pub mod token_stats;
 pub mod transcript;
 pub mod update_check;
 pub mod workspace_store;
@@ -62,6 +63,7 @@ pub fn run() {
             pop_out::bring_back_session,
             pop_out::detect_terminals,
             pop_out::list_external_sessions,
+            token_stats::token_stats,
         ])
         .setup(|app| {
             session_index::start_watcher(app.handle().clone());
