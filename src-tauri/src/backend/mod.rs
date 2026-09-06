@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 pub enum BackendKind {
     #[default]
     Claude,
-    // Codex, // added in a later task
+    Codex,
 }
 
 /// Per-record token usage pulled from one transcript line:
@@ -184,17 +184,83 @@ impl SessionBackend for ClaudeBackend {
 }
 
 // ---------------------------------------------------------------------------
+// Codex backend
+// ---------------------------------------------------------------------------
+
+/// The OpenAI Codex CLI backend. Like [`ClaudeBackend`] this is pure dispatch
+/// into the Codex seam modules (`codex`, `codex_bin`); the Codex-specific
+/// on-disk topology, envelope parse, and token-usage shape all live there.
+///
+/// The resume/start argv here are **unverified against a live `codex` binary**
+/// (none was installed when this was written) — task 3 runtime-verifies them.
+pub struct CodexBackend;
+
+impl SessionBackend for CodexBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::Codex
+    }
+
+    fn transcripts_root(&self) -> PathBuf {
+        crate::codex::codex_sessions_dir()
+    }
+
+    fn transcript_files(&self, root: &Path) -> Vec<PathBuf> {
+        // `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` — date-sharded, so
+        // this is a recursive walk (unlike Claude's fixed one level).
+        crate::codex::transcript_files(root)
+    }
+
+    fn parse_transcript(&self, path: &Path) -> Option<SessionMeta> {
+        crate::codex::parse_transcript(path)
+    }
+
+    fn resume_argv(&self, session_id: &str) -> (String, Vec<String>) {
+        // Codex resume is a SUBCOMMAND (`codex resume <id>`), not a `--flag`.
+        // Unverified against a live binary — see the struct doc.
+        (
+            self.resolve_binary(),
+            vec!["resume".to_string(), session_id.to_string()],
+        )
+    }
+
+    fn start_argv(&self) -> (String, Vec<String>) {
+        // Bare `codex` opens a fresh interactive session. Unverified against a
+        // live binary.
+        (self.resolve_binary(), vec![])
+    }
+
+    fn resolve_binary(&self) -> String {
+        crate::codex_bin::codex_program()
+    }
+
+    fn tail_looks_like_prompt(&self, tail: &str) -> bool {
+        crate::codex::tail_looks_like_prompt(tail)
+    }
+
+    fn usage_from_record(&self, v: &serde_json::Value) -> Option<RecordUsage> {
+        crate::codex::usage_from_record(v)
+    }
+
+    fn record_timestamp(&self, v: &serde_json::Value) -> Option<DateTime<Utc>> {
+        crate::codex::record_timestamp(v)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
 /// The Claude backend singleton.
 pub static CLAUDE: ClaudeBackend = ClaudeBackend;
 
+/// The Codex backend singleton.
+pub static CODEX: CodexBackend = CodexBackend;
+
 /// Every backend the app knows about, in discovery order. Discovery (the
 /// session watcher, token stats) iterates this; per-session dispatch uses
 /// [`backend_for`]. Adding Codex is a one-line change here plus its impl.
 pub fn all_backends() -> &'static [&'static dyn SessionBackend] {
-    static BACKENDS: &[&dyn SessionBackend] = &[&CLAUDE];
+    static BACKENDS: &[&dyn SessionBackend] = &[&CLAUDE, &CODEX];
     BACKENDS
 }
 
@@ -203,6 +269,7 @@ pub fn all_backends() -> &'static [&'static dyn SessionBackend] {
 pub fn backend_for(kind: BackendKind) -> &'static dyn SessionBackend {
     match kind {
         BackendKind::Claude => &CLAUDE,
+        BackendKind::Codex => &CODEX,
     }
 }
 
@@ -224,15 +291,47 @@ mod tests {
     }
 
     #[test]
-    fn registry_dispatches_claude() {
+    fn registry_dispatches_each_backend() {
         assert_eq!(backend_for(BackendKind::Claude).kind(), BackendKind::Claude);
-        assert_eq!(all_backends().len(), 1);
+        assert_eq!(backend_for(BackendKind::Codex).kind(), BackendKind::Codex);
+        assert_eq!(all_backends().len(), 2);
+    }
+
+    #[test]
+    fn backend_kind_codex_serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&BackendKind::Codex).unwrap(),
+            "\"codex\""
+        );
     }
 
     #[test]
     fn claude_resume_argv_is_resume_flag() {
         let (_program, args) = CLAUDE.resume_argv("abc-123");
         assert_eq!(args, vec!["--resume".to_string(), "abc-123".to_string()]);
+    }
+
+    #[test]
+    fn codex_resume_argv_is_resume_subcommand() {
+        // Codex uses a `resume` subcommand, not a `--resume` flag.
+        let (_program, args) = CODEX.resume_argv("abc-123");
+        assert_eq!(args, vec!["resume".to_string(), "abc-123".to_string()]);
+    }
+
+    #[test]
+    fn codex_start_argv_is_bare() {
+        let (_program, args) = CODEX.start_argv();
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn codex_scan_over_fixture_tree_is_codex_tagged() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex");
+        let all = CODEX.scan(&dir);
+        assert_eq!(all.len(), 2);
+        // Newest-activity first (the 2026-09-06 rollout precedes 2026-08-15).
+        assert!(all[0].last_activity >= all[1].last_activity);
+        assert!(all.iter().all(|s| s.backend == BackendKind::Codex));
     }
 
     #[test]

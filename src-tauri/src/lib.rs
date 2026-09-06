@@ -1,6 +1,8 @@
 pub mod activity;
 pub mod backend;
 pub mod claude_bin;
+pub mod codex;
+pub mod codex_bin;
 pub mod pop_out;
 pub mod pty_manager;
 pub mod session_index;
