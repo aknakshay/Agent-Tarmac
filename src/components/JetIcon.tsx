@@ -1,3 +1,4 @@
+import { useId } from "react";
 import type { Session } from "../types";
 
 /**
@@ -32,6 +33,9 @@ interface JetIconProps {
 
 export function JetIcon({ status, external = false, className = "h-2.5 w-2.5" }: JetIconProps) {
   const hollow = status === "dormant";
+  // Unique per instance — this glyph renders many times at once (every
+  // sidebar row), and gradient ids must not collide across <svg>s.
+  const flameGradientId = useId();
 
   return (
     <svg
@@ -49,14 +53,25 @@ export function JetIcon({ status, external = false, className = "h-2.5 w-2.5" }:
         opacity={status === "idle" ? 0.6 : 1}
       />
       {status === "working" && (
-        <ellipse
-          cx="8"
-          cy="11.6"
-          rx="1"
-          ry="1.6"
-          fill="currentColor"
-          className="origin-[8px_11.6px] animate-[jet-afterburner_1.4s_ease-in-out_infinite]"
-        />
+        <>
+          {/* Real afterburner physics: hottest (red) at the nozzle, cooling
+              to yellow at the flame's tip — kept off the hull's green so
+              the flame reads as its own thing even at 12-14px. */}
+          <defs>
+            <linearGradient id={flameGradientId} x1="8" y1="10" x2="8" y2="13.2" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#ff5a3c" />
+              <stop offset="100%" stopColor="#ffd166" />
+            </linearGradient>
+          </defs>
+          <ellipse
+            cx="8"
+            cy="11.6"
+            rx="1"
+            ry="1.6"
+            fill={`url(#${flameGradientId})`}
+            className="origin-[8px_11.6px] animate-[jet-afterburner_1.4s_ease-in-out_infinite]"
+          />
+        </>
       )}
     </svg>
   );

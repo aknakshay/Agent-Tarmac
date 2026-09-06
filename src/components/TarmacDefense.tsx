@@ -216,8 +216,14 @@ const PLAYER_PALETTE = {
   hullLight: "#7fe0a0",
   hullDark: "#2f8f55",
   accent: "#6ba5fb",
+  // Muzzle flash only — kept separate from the engine flame below so the
+  // two don't move together by accident.
   flame: "#f7d787",
   flameHot: "#fff3d0",
+  // Afterburner: red at the nozzle, cooling to yellow at the tip — warm on
+  // purpose so it never reads as part of the green hull.
+  flameNozzle: "#ff5a3c",
+  flameTip: "#ffd166",
 };
 
 const POWERUP_LABEL: Record<PowerUpType, string> = {
@@ -1142,9 +1148,9 @@ function drawEngineFlame(
   ctx.save();
   ctx.globalAlpha = Math.min(1, 0.55 + flicker * 0.35) * strength;
   const grad = ctx.createLinearGradient(x, rearY, x, rearY + length);
-  grad.addColorStop(0, PLAYER_PALETTE.flameHot);
-  grad.addColorStop(0.45, PLAYER_PALETTE.flame);
-  grad.addColorStop(1, "rgba(247,215,135,0)");
+  grad.addColorStop(0, PLAYER_PALETTE.flameNozzle);
+  grad.addColorStop(0.5, PLAYER_PALETTE.flameTip);
+  grad.addColorStop(1, "rgba(255,209,102,0)");
   ctx.fillStyle = grad;
   ctx.beginPath();
   ctx.moveTo(x - width, rearY);
