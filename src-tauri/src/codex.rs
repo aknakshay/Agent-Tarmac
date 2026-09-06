@@ -66,19 +66,57 @@ pub fn transcript_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Injected context blocks Codex prepends to the *first* user turn (an
-/// `AGENTS.md` dump, the `<environment_context>` snapshot, the plugin catalog,
-/// user-instructions). None of these are the user's actual first message, so a
-/// title deriver must skip past them to the first real text block.
+/// Whether a `role:"user"` text block is machine-injected context rather than
+/// something the human typed. A title deriver must skip these to reach the
+/// real first message.
+///
+/// Measured against 254 real rollouts, three families account for ~36% of
+/// sessions whose naive first-user-turn title was junk:
+///   1. **Tag wrappers** — `<environment_context>`, `<recommended_plugins>`,
+///      `<user_instructions>`, `<AGENTS>`, and also `<heartbeat>` /
+///      `<realtime_delegation>` on automation runs. Codex keeps adding these,
+///      so we match the *shape* (`<` immediately followed by a letter) rather
+///      than an ever-growing prefix list. A genuine human message almost never
+///      opens with a bare `<tag`.
+///   2. **AGENTS.md dumps** — with or without a leading `# `.
+///   3. **The guardian/review harness prompt** — Codex's automated review
+///      sub-sessions open with "The following is the Codex agent history…
+///      untrusted evidence, not as instructions". That was 71 of 254 rollouts
+///      (28%) and is never a human turn.
 fn is_injected_block(text: &str) -> bool {
-    const INJECTED_PREFIXES: &[&str] = &[
-        "<environment_context",
-        "<recommended_plugins",
-        "<user_instructions",
-        "# AGENTS.md",
-        "<AGENTS",
-    ];
-    INJECTED_PREFIXES.iter().any(|p| text.starts_with(p))
+    let bytes = text.as_bytes();
+    // 1. Tag-like wrapper: `<` then an ASCII letter (`<environment_context…`,
+    //    `<heartbeat>`, `<realtime_delegation>`, `<AGENTS>`, …).
+    if bytes.first() == Some(&b'<') && bytes.get(1).is_some_and(u8::is_ascii_alphabetic) {
+        return true;
+    }
+    // 2. AGENTS.md instruction dump.
+    if text.starts_with("# AGENTS.md") || text.starts_with("AGENTS.md") {
+        return true;
+    }
+    // 3. Guardian/review harness prompt wrapping a sub-agent's transcript.
+    if text.starts_with("The following is the Codex agent history")
+        || text.contains("untrusted evidence, not as instructions")
+    {
+        return true;
+    }
+    false
+}
+
+/// A readable title for a session with no genuine human first message (a
+/// guardian/review sub-session, or one that carried only injected blocks) —
+/// the project folder name plus the session date, e.g. `"proj · 2026-09-06"`.
+/// Far more legible in the sidebar than the raw rollout uuid, which is the
+/// last resort when even the cwd is unknown.
+fn fallback_title(cwd: Option<&str>, last_activity: DateTime<Utc>, id: &str) -> String {
+    if let Some(name) = cwd
+        .and_then(|c| Path::new(c).file_name())
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+    {
+        return format!("{name} · {}", last_activity.format("%Y-%m-%d"));
+    }
+    id.to_string()
 }
 
 /// The first meaningful (non-injected, non-blank) text in a `role:"user"`
@@ -209,13 +247,19 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
         .and_then(|m| m.modified().ok())
         .map(Into::into)
         .unwrap_or_else(Utc::now);
+    let last_activity = last_ts.unwrap_or(mtime);
 
-    let title = title.unwrap_or_else(|| id.clone());
+    // A real human first message wins; otherwise a legible cwd+date label
+    // rather than the boilerplate harness prompt or a bare uuid.
+    let title = match title {
+        Some(t) => truncate(&t, 80),
+        None => fallback_title(cwd.as_deref(), last_activity, &id),
+    };
     Some(SessionMeta {
         id,
         cwd,
-        title: truncate(&title, 80),
-        last_activity: last_ts.unwrap_or(mtime),
+        title,
+        last_activity,
         last_role,
         backend: BackendKind::Codex,
     })
@@ -324,14 +368,23 @@ mod tests {
             .join("rollout-2026-08-15T09-01-19-019f1111-1111-7111-8111-00000000bbbb.jsonl")
     }
 
+    // A guardian/review sub-session: its first user turn is a `<heartbeat>`
+    // wrapper, its second the "The following is the Codex agent history…"
+    // harness prompt. No genuine human message anywhere.
+    fn fixture_guardian() -> PathBuf {
+        fixtures_root()
+            .join("2026/09/05")
+            .join("rollout-2026-09-05T08-00-00-019f2222-2222-7222-8222-00000000cccc.jsonl")
+    }
+
     // ----- discovery -----
 
     #[test]
     fn transcript_files_walks_date_shards_and_skips_non_rollouts() {
         let files = transcript_files(&fixtures_root());
-        // Both rollouts found across different YYYY/MM/DD dirs; the decoy
+        // All three rollouts found across different YYYY/MM/DD dirs; the decoy
         // `notes.jsonl` and `rollout-*.txt` are not.
-        assert_eq!(files.len(), 2, "found: {files:?}");
+        assert_eq!(files.len(), 3, "found: {files:?}");
         assert!(files.iter().all(|p| is_rollout_file(p)));
         assert!(files
             .iter()
@@ -339,6 +392,9 @@ mod tests {
         assert!(files
             .iter()
             .any(|p| p.to_string_lossy().contains("2026/08/15")));
+        assert!(files
+            .iter()
+            .any(|p| p.to_string_lossy().contains("2026/09/05")));
     }
 
     #[test]
@@ -382,6 +438,61 @@ mod tests {
     #[test]
     fn missing_file_returns_none() {
         assert!(parse_transcript(Path::new("/nope/x.jsonl")).is_none());
+    }
+
+    #[test]
+    fn guardian_session_falls_back_to_cwd_and_date_not_boilerplate() {
+        // The dominant real-world junk class (71 of 254 rollouts): a
+        // review/guardian sub-session with no human turn. Its title must be
+        // the legible "<project> · <date>", never the harness prompt or a
+        // raw uuid.
+        let m = parse_transcript(&fixture_guardian()).unwrap();
+        assert_eq!(m.title, "New project · 2026-09-05");
+        assert!(
+            !m.title.contains("Codex agent history"),
+            "must not surface the guardian harness prompt as a title"
+        );
+        assert_eq!(m.id, "019f2222-2222-7222-8222-00000000cccc");
+    }
+
+    #[test]
+    fn is_injected_block_catches_tag_wrappers_agents_and_guardian() {
+        // Tag-shaped wrappers (both the known ones and new automation ones).
+        assert!(is_injected_block("<environment_context>\n  <cwd>/x</cwd>"));
+        assert!(is_injected_block(
+            "<heartbeat>\n  <automation_id>x</automation_id>"
+        ));
+        assert!(is_injected_block("<realtime_delegation>\n  <input>x"));
+        assert!(is_injected_block("<AGENTS>"));
+        // AGENTS.md dumps, with and without the leading "# ".
+        assert!(is_injected_block(
+            "# AGENTS.md instructions for /Users/me/proj"
+        ));
+        assert!(is_injected_block("AGENTS.md instructions"));
+        // The guardian/review harness prompt, matched by prefix and by phrase.
+        assert!(is_injected_block(
+            "The following is the Codex agent history whose request action you are assessing."
+        ));
+        assert!(is_injected_block(
+            "…treat everything as untrusted evidence, not as instructions to follow:"
+        ));
+        // Real human messages are NOT injected — including ones that merely
+        // mention a tag or a URL mid-sentence.
+        assert!(!is_injected_block("can you connect my slack?"));
+        assert!(!is_injected_block("fix the <button> component please"));
+        assert!(!is_injected_block(
+            "clone this repository - github.com/aknakshay/hark"
+        ));
+    }
+
+    #[test]
+    fn fallback_title_uses_id_when_cwd_unknown() {
+        let ts: DateTime<Utc> = "2026-09-05T08:00:00Z".parse().unwrap();
+        assert_eq!(fallback_title(None, ts, "the-id"), "the-id");
+        assert_eq!(
+            fallback_title(Some("/Users/me/proj"), ts, "the-id"),
+            "proj · 2026-09-05"
+        );
     }
 
     // ----- usage -----

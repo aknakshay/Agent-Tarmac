@@ -394,9 +394,10 @@ mod tests {
     fn codex_scan_over_fixture_tree_is_codex_tagged() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex");
         let all = CODEX.scan(&dir);
-        assert_eq!(all.len(), 2);
-        // Newest-activity first (the 2026-09-06 rollout precedes 2026-08-15).
+        assert_eq!(all.len(), 3);
+        // Newest-activity first (2026-09-06, then 2026-09-05, then 2026-08-15).
         assert!(all[0].last_activity >= all[1].last_activity);
+        assert!(all[1].last_activity >= all[2].last_activity);
         assert!(all.iter().all(|s| s.backend == BackendKind::Codex));
     }
 
