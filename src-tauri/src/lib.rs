@@ -1,10 +1,12 @@
 pub mod activity;
 pub mod backend;
+pub mod bounded_read;
 pub mod claude_bin;
 pub mod codex;
 pub mod codex_bin;
 pub mod pop_out;
 pub mod pty_manager;
+pub mod session_cache;
 pub mod session_index;
 pub mod share_sheet;
 pub mod snapshot;
@@ -46,9 +48,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .manage(session_index::SessionIndexState(Mutex::new(
-            session_index::scan_all(),
-        )))
+        // Startup must NOT block on a scan: the window paints with an EMPTY
+        // index, and `start_background_scan` (in .setup) fills it — first from
+        // the persisted cache (instant), then from a fresh disk reconcile.
+        // Reading every transcript synchronously here was the v0.4.0 cold-start
+        // stall (27 GB of rollouts on this machine).
+        .manage(session_index::SessionIndexState(Mutex::new(Vec::new())))
+        .manage(session_cache::SessionCacheState::default())
         .manage(workspace_store::WorkspaceState(Mutex::new(
             workspace_store::Workspace::default(),
         )))
@@ -73,6 +79,7 @@ pub fn run() {
             share_sheet::share_snapshot_png,
         ])
         .setup(|app| {
+            session_index::start_background_scan(app.handle().clone());
             session_index::start_watcher(app.handle().clone());
             status_loop::start(app.handle().clone());
             update_check::start(app.handle().clone());

@@ -107,15 +107,21 @@ function App() {
   }, [commandBarOpen, newSessionOpen, openIds, focus, goHome, activeId, toggleMarkedUnread]);
 
   useEffect(() => {
-    invoke<SessionMeta[]>("list_sessions")
-      .then(setSessions)
-      // Hydrate persisted read/unread, tags, and rename metadata once the
-      // session index has landed, so hydrateMeta has known sessions to
-      // merge into (a session_meta entry for an id nobody's scanned yet is
-      // simply skipped — see store.ts).
-      .then(() => invoke<Workspace>("get_workspace"))
+    // The session list now arrives via the `sessions_updated` event from the
+    // non-blocking startup scan: the backend index starts EMPTY (lib.rs) and a
+    // background thread fills it off the UI thread — first from the persisted
+    // cache (instant), then from a fresh disk reconcile. So we no longer call
+    // `list_sessions` here (it would return the still-empty index and flip
+    // `sessionsLoaded` before any session had loaded, which made RestoreBanner
+    // evaluate — and clear — live ids against an empty set).
+    //
+    // We only prime the persisted read/unread, tags, favorites, and rename
+    // caches so the first `sessions_updated` batch paints with them already
+    // applied; `hydrateMeta` also back-fills a batch that happened to land
+    // first (it merges into whatever sessions are present — see store.ts).
+    invoke<Workspace>("get_workspace")
       .then(hydrateMeta)
-      .catch((err) => console.error("Failed to load sessions", err));
+      .catch((err) => console.error("Failed to load workspace meta", err));
 
     // One-time probe for installed terminals (Ghostty, iTerm2, ...) so the
     // pop-out control can offer real choices and label itself truthfully.
