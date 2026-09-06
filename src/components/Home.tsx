@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -7,7 +7,13 @@ import { computeFleetStats, playCardFraming, type RightNowStats } from "../lib/s
 import { loadBest, type BestScore } from "../lib/tarmacDefenseBest";
 import { formatTokenCount } from "../lib/formatTokens";
 import { EMPTY_TOKEN_STATS, fetchTokenStats, type TokenStats } from "../lib/tokenStats";
-import { shareSnapshot } from "../lib/snapshotCard";
+import {
+  drawSnapshotCard,
+  shareSnapshot,
+  SNAPSHOT_HEIGHT,
+  SNAPSHOT_WIDTH,
+  type SnapshotData,
+} from "../lib/snapshotCard";
 import { Logo, RunwayDivider } from "./icons/BrandMotifs";
 import { TarmacDefense } from "./TarmacDefense";
 import { Toast, useToast } from "./Toast";
@@ -80,22 +86,30 @@ export function Home() {
     };
   }, []);
 
+  // The content half of the snapshot — everything but `now`, which is
+  // stamped fresh at render/share time. Shared between the live preview and
+  // the actual share action so they can never drift apart.
+  const snapshotBase = useMemo(
+    () => ({
+      tokens,
+      sessionsToday: stats.activeToday,
+      projects: stats.totals.projects,
+      best,
+      version,
+    }),
+    [tokens, stats.activeToday, stats.totals.projects, best, version],
+  );
+
   const { toast, showToast } = useToast();
   const [sharing, setSharing] = useState(false);
   const handleShare = async () => {
     if (sharing) return;
     setSharing(true);
     try {
-      const result = await shareSnapshot({
-        tokens,
-        sessionsToday: stats.activeToday,
-        projects: stats.totals.projects,
-        best,
-        version,
-        now: new Date(),
-      });
-      if (result.method === "clipboard") showToast("Snapshot copied");
-      else if (result.method === "file") showToast("Snapshot saved");
+      const result = await shareSnapshot({ ...snapshotBase, now: new Date() });
+      if (result.method === "clipboard") {
+        showToast(result.shareSheet ? "Copied — and ready to share" : "Snapshot copied");
+      } else if (result.method === "file") showToast("Snapshot saved");
     } catch (err) {
       console.error("Failed to share snapshot", err);
       showToast("Couldn't create snapshot");
@@ -177,7 +191,7 @@ export function Home() {
 
         <RunwayDivider />
 
-        <TokensSection tokens={tokens} sharing={sharing} onShare={handleShare} />
+        <TokensSection tokens={tokens} snapshotBase={snapshotBase} sharing={sharing} onShare={handleShare} />
 
         <footer className="flex items-center justify-center gap-1.5 pt-2 text-xs text-ink-faint">
           <span>Agent Tarmac{version ? ` v${version}` : ""}</span>
@@ -206,15 +220,18 @@ export function Home() {
  * The "tokenmaxxing" stats section — today's output tokens as the flex
  * number (largest figure on the page besides the game's own HUD), input +
  * cache-read kept subtle beneath it, all-time total as the long view. The
- * share button renders the same numbers into a boarding-pass-style PNG via
- * lib/snapshotCard.ts and copies it to the clipboard.
+ * live preview below renders the exact PNG the share action produces (same
+ * lib/snapshotCard.ts draw code, same numbers) so there's never a surprise
+ * between what's on screen and what gets shared.
  */
 function TokensSection({
   tokens,
+  snapshotBase,
   sharing,
   onShare,
 }: {
   tokens: TokenStats;
+  snapshotBase: Omit<SnapshotData, "now">;
   sharing: boolean;
   onShare: () => void;
 }) {
@@ -227,7 +244,7 @@ function TokensSection({
           type="button"
           onClick={onShare}
           disabled={sharing}
-          title="Copy a shareable tokenmaxxing snapshot"
+          title="Share this tokenmaxxing snapshot"
           className="rounded-md border border-border px-2.5 py-1 text-xs font-medium text-ink-muted transition-colors duration-150 hover:border-accent/50 hover:text-ink disabled:opacity-50"
         >
           {sharing ? "Rendering…" : "Share snapshot"}
@@ -241,7 +258,67 @@ function TokensSection({
         {formatTokenCount(tokens.todayInput)} in · {formatTokenCount(tokens.todayCacheRead)} cache read
       </p>
       <p className="text-xs text-ink-faint">{formatTokenCount(allTime)} all-time</p>
+      <SnapshotPreview data={snapshotBase} sharing={sharing} onShare={onShare} />
     </section>
+  );
+}
+
+/**
+ * A live, to-scale preview of the exact card the share action produces —
+ * "show on the dashboard how it will be exported" per product feedback.
+ * Redraws (lightly debounced) whenever the underlying numbers change, at
+ * the viewer's actual device pixel ratio so it stays crisp on retina.
+ * Clicking it shares, same as the button above.
+ */
+function SnapshotPreview({
+  data,
+  sharing,
+  onShare,
+}: {
+  data: Omit<SnapshotData, "now">;
+  sharing: boolean;
+  onShare: () => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const DISPLAY_WIDTH = 480;
+  const displayHeight = Math.round((DISPLAY_WIDTH * SNAPSHOT_HEIGHT) / SNAPSHOT_WIDTH);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // The numbers here tick at most every 30s (token poll) or right after a
+    // game run — nothing time-sensitive enough to redraw on every render,
+    // so a light debounce avoids doing the draw work on transient state.
+    const timer = window.setTimeout(() => {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      const targetWidth = Math.round(DISPLAY_WIDTH * dpr);
+      const targetHeight = Math.round((targetWidth * SNAPSHOT_HEIGHT) / SNAPSHOT_WIDTH);
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      ctx.setTransform(targetWidth / SNAPSHOT_WIDTH, 0, 0, targetHeight / SNAPSHOT_HEIGHT, 0, 0);
+      drawSnapshotCard(ctx, { ...data, now: new Date() });
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [data]);
+
+  return (
+    <button
+      type="button"
+      onClick={onShare}
+      disabled={sharing}
+      title="Click to share this snapshot"
+      className="group self-start overflow-hidden rounded-xl border border-border bg-surface shadow-[0_1px_2px_rgba(0,0,0,0.35)] transition-all duration-150 ease-out hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-[0_10px_28px_rgba(0,0,0,0.4)] focus-visible:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-60 motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+    >
+      <canvas
+        ref={canvasRef}
+        style={{ width: DISPLAY_WIDTH, height: displayHeight }}
+        className="block"
+        aria-hidden="true"
+      />
+      <span className="sr-only">Share this tokenmaxxing snapshot</span>
+    </button>
   );
 }
 

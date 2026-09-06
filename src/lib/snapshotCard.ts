@@ -193,11 +193,12 @@ export function drawSnapshotCard(ctx: CanvasRenderingContext2D, data: SnapshotDa
     ctx.fillText(content.bestLine.replace("Tarmac Defense best: ", ""), marginX + 76, stubY + 64);
   }
 
-  // Footer.
+  // Footer — a quiet signature, not an ad: the repo URL so a viewer knows
+  // where this came from, legible but never competing with the numbers.
   ctx.fillStyle = PALETTE.inkFaint;
   ctx.font = "400 14px -apple-system, BlinkMacSystemFont, sans-serif";
   ctx.textAlign = "left";
-  ctx.fillText("Agent Tarmac · agent-tarmac", marginX, H - 40);
+  ctx.fillText("github.com/aknakshay/Agent-Tarmac", marginX, H - 40);
   ctx.textAlign = "right";
   if (data.version) {
     ctx.fillText(`v${data.version}`, W - marginX, H - 40);
