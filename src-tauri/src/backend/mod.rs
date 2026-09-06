@@ -131,6 +131,16 @@ pub trait SessionBackend: Send + Sync {
     /// The timestamp of one transcript record, if present. Used to bucket
     /// token usage into "today" vs all-time.
     fn record_timestamp(&self, v: &serde_json::Value) -> Option<DateTime<Utc>>;
+
+    /// Whether this transcript is a hidden surface that carries no usage and
+    /// should be skipped entirely by token scanning — the ChatGPT-app Codex
+    /// rollouts (Desktop / extension), which are hidden in the sidebar anyway
+    /// and account for all 27 GB of rollouts on the author's machine. Decided
+    /// from a cheap bounded head read, never a full-file scan. Default `false`
+    /// (Claude has no such surface); Codex overrides.
+    fn is_hidden_usage_surface(&self, _path: &Path) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +292,10 @@ impl SessionBackend for CodexBackend {
 
     fn record_timestamp(&self, v: &serde_json::Value) -> Option<DateTime<Utc>> {
         crate::codex::record_timestamp(v)
+    }
+
+    fn is_hidden_usage_surface(&self, path: &Path) -> bool {
+        crate::codex::is_app_surface(path)
     }
 }
 
