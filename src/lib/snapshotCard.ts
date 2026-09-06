@@ -248,13 +248,34 @@ export function renderSnapshotBlob(data: SnapshotData): Promise<Blob> {
   });
 }
 
-export type ShareSnapshotResult = { method: "clipboard" } | { method: "file"; path: string } | { method: "cancelled" };
+export type ShareSnapshotResult =
+  | { method: "clipboard"; shareSheet: boolean }
+  | { method: "file"; path: string }
+  | { method: "cancelled" };
 
 /**
- * Renders the card and copies it to the clipboard as a PNG. If the webview's
- * clipboard write is unavailable or rejected (some Tauri webviews restrict
- * `navigator.clipboard.write` for non-text types), falls back to a save
- * dialog + direct file write so the user still gets the image.
+ * Best-effort native share (macOS only today — see `share_snapshot_png` in
+ * src-tauri/src/share_sheet.rs, which presents NSSharingServicePicker).
+ * Clipboard is always the primary, guaranteed outcome; this is additive
+ * "belt and braces" on top of it, so any failure here is swallowed.
+ */
+async function tryPresentShareSheet(blob: Blob): Promise<boolean> {
+  try {
+    const dataB64 = await blobToBase64(blob);
+    await invoke("share_snapshot_png", { dataB64 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Renders the card and copies it to the clipboard as a PNG, then also tries
+ * to present the native share sheet with the same image (macOS only; a
+ * no-op failure elsewhere). If the webview's clipboard write is unavailable
+ * or rejected (some Tauri webviews restrict `navigator.clipboard.write` for
+ * non-text types), falls back to a save dialog + direct file write so the
+ * user still gets the image.
  */
 export async function shareSnapshot(data: SnapshotData): Promise<ShareSnapshotResult> {
   const blob = await renderSnapshotBlob(data);
@@ -264,7 +285,8 @@ export async function shareSnapshot(data: SnapshotData): Promise<ShareSnapshotRe
       throw new Error("Clipboard image write not supported in this webview");
     }
     await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-    return { method: "clipboard" };
+    const shareSheet = await tryPresentShareSheet(blob);
+    return { method: "clipboard", shareSheet };
   } catch {
     const path = await save({
       title: "Save tokenmaxxing snapshot",
