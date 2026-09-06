@@ -5,10 +5,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// Aggregated Claude Code token usage across every transcript on disk —
-/// backs the Home screen's "tokenmaxxing" stats and the shareable snapshot
-/// card. Field names are camelCase on the wire so the TS side needs no
-/// manual mapping.
+/// Aggregated agent token usage across every transcript on disk, summed over
+/// all backends (Claude + Codex) — backs the Home screen's "tokenmaxxing"
+/// stats and the shareable snapshot card. Field names are camelCase on the
+/// wire so the TS side needs no manual mapping.
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TokenStats {
@@ -18,7 +18,7 @@ pub struct TokenStats {
     pub total_output: u64,
     pub total_input: u64,
     /// Distinct transcripts (sessions) that contain at least one usage
-    /// record, across all of `~/.claude/projects`. All-time, not "today".
+    /// record, across every backend's transcript root. All-time, not "today".
     pub session_count: u64,
 }
 
@@ -124,19 +124,27 @@ pub fn compute_stats(backend: &dyn SessionBackend, root: &Path, today: NaiveDate
     stats
 }
 
-/// Sum token usage across every registered backend, each at its own root.
-/// With a single (Claude) backend this equals `compute_stats(&CLAUDE,
-/// claude_projects_dir(), today)`.
+/// Fold one backend's stats into the running fleet total. Field-wise add,
+/// factored out so `compute_stats_all`'s summation is unit-testable without
+/// reaching the real `~/.claude` / `~/.codex` roots.
+fn accumulate(total: &mut TokenStats, s: &TokenStats) {
+    total.today_output += s.today_output;
+    total.today_input += s.today_input;
+    total.today_cache_read += s.today_cache_read;
+    total.total_output += s.total_output;
+    total.total_input += s.total_input;
+    total.session_count += s.session_count;
+}
+
+/// Sum token usage across every registered backend (Claude + Codex), each
+/// scanned at its own on-disk root. This is what the Home "tokenmaxxing"
+/// number and the snapshot card ultimately read, so Codex usage flows into
+/// the fleet total here.
 fn compute_stats_all(today: NaiveDate) -> TokenStats {
     let mut total = TokenStats::default();
     for b in backend::all_backends() {
         let s = compute_stats(*b, &b.transcripts_root(), today);
-        total.today_output += s.today_output;
-        total.today_input += s.today_input;
-        total.today_cache_read += s.today_cache_read;
-        total.total_output += s.total_output;
-        total.total_input += s.total_input;
-        total.session_count += s.session_count;
+        accumulate(&mut total, &s);
     }
     total
 }
@@ -170,6 +178,21 @@ mod tests {
 
     fn fixtures_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/token_projects")
+    }
+
+    fn codex_fixtures_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex")
+    }
+
+    /// "today" derived from the Codex fixture's token_usage_record timestamp
+    /// through the same Utc -> Local -> date_naive path the code uses, so the
+    /// bucketing test is timezone-independent.
+    fn codex_today_from_fixture() -> NaiveDate {
+        "2026-09-06T14:47:34Z"
+            .parse::<DateTime<Utc>>()
+            .unwrap()
+            .with_timezone(&Local)
+            .date_naive()
     }
 
     /// The "today" fixture record's own timestamp, converted through the
@@ -219,6 +242,61 @@ mod tests {
                 today_from_fixture()
             ),
             TokenStats::default()
+        );
+    }
+
+    #[test]
+    fn codex_backend_extracts_per_response_usage() {
+        // Codex flows through the SAME compute_stats seam as Claude, just with
+        // the Codex backend + its date-sharded fixture tree. Fixture A carries
+        // one token_usage_record (100/50/10) dated 2026-09-06; fixture B has
+        // none, so it contributes nothing (no session, no tokens).
+        let stats = compute_stats(
+            &backend::CODEX,
+            &codex_fixtures_dir(),
+            codex_today_from_fixture(),
+        );
+        assert_eq!(stats.total_input, 100);
+        // 50, NOT 55 — reasoning_output_tokens (5) is already inside output.
+        assert_eq!(stats.total_output, 50);
+        assert_eq!(stats.today_input, 100);
+        assert_eq!(stats.today_output, 50);
+        assert_eq!(stats.today_cache_read, 10);
+        // Only fixture A has a usage record; fixture B (desktop-bundled shape)
+        // does not, so exactly one session counts.
+        assert_eq!(stats.session_count, 1);
+    }
+
+    #[test]
+    fn fleet_total_sums_claude_and_codex_without_disturbing_claude() {
+        // Mirrors what compute_stats_all does (accumulate over all backends),
+        // but with fixture roots instead of the real ~/.claude / ~/.codex.
+        // Proves Codex tokens ADD to the fleet total and Claude's numbers are
+        // unchanged by Codex's presence.
+        let claude = compute_stats(&backend::CLAUDE, &fixtures_dir(), today_from_fixture());
+        let codex = compute_stats(&backend::CODEX, &codex_fixtures_dir(), today_from_fixture());
+
+        let mut fleet = TokenStats::default();
+        accumulate(&mut fleet, &claude);
+        accumulate(&mut fleet, &codex);
+
+        // Claude portion is exactly the standalone Claude numbers (unchanged).
+        assert_eq!(claude.total_input, 100 + 200 + 300);
+        assert_eq!(claude.total_output, 50 + 80 + 150);
+        assert_eq!(claude.session_count, 2);
+
+        // Fleet total is Claude + Codex, field by field.
+        assert_eq!(fleet.total_input, claude.total_input + codex.total_input);
+        assert_eq!(fleet.total_output, claude.total_output + codex.total_output);
+        assert_eq!(
+            fleet.session_count,
+            claude.session_count + codex.session_count
+        );
+        assert_eq!(fleet.today_input, claude.today_input + codex.today_input);
+        assert_eq!(fleet.today_output, claude.today_output + codex.today_output);
+        assert_eq!(
+            fleet.today_cache_read,
+            claude.today_cache_read + codex.today_cache_read
         );
     }
 }

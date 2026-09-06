@@ -233,6 +233,18 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
 ///
 /// Field rename vs Claude: Codex's `cached_input_tokens` maps to the
 /// `cache_read` slot.
+///
+/// **`reasoning_output_tokens` is deliberately NOT added to `output`.** Codex
+/// records usage in OpenAI's Responses shape, where `output_tokens` *already
+/// includes* the reasoning tokens — `reasoning_output_tokens` is a breakdown
+/// detail of `output_tokens`, not a sibling to be summed on top. The fixture
+/// encodes the invariant that proves this: `total_tokens (150) == input_tokens
+/// (100) + output_tokens (50)`, with `reasoning_output_tokens (5)` sitting
+/// *inside* the 50. Folding reasoning into `output` here would double-count it
+/// against the billed total. So reasoning is not "dropped" from the fleet total
+/// — it is counted once, as part of `output_tokens`. (If real Codex data ever
+/// shows `total == input + output + reasoning`, revisit this; the invariant
+/// check would fail and the fold would then be correct.)
 pub fn usage_from_record(v: &serde_json::Value) -> Option<RecordUsage> {
     if v.get("type").and_then(|t| t.as_str()) != Some("token_usage_record") {
         return None;
@@ -242,6 +254,7 @@ pub fn usage_from_record(v: &serde_json::Value) -> Option<RecordUsage> {
         .get("input_tokens")
         .and_then(|n| n.as_u64())
         .unwrap_or(0);
+    // Already includes reasoning_output_tokens (see doc comment) — do not add.
     let output = usage
         .get("output_tokens")
         .and_then(|n| n.as_u64())
@@ -386,6 +399,49 @@ mod tests {
             "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 5}}}
         });
         assert!(usage_from_record(&event).is_none());
+    }
+
+    #[test]
+    fn output_does_not_double_count_reasoning() {
+        // OpenAI Responses semantics: output_tokens already includes
+        // reasoning_output_tokens. Folding reasoning in would report 55; the
+        // billed output is 50. Guard against a future "helpful" fold.
+        let rec = serde_json::json!({
+            "type": "token_usage_record",
+            "payload": {"usage": {
+                "input_tokens": 100,
+                "cached_input_tokens": 10,
+                "output_tokens": 50,
+                "reasoning_output_tokens": 5,
+                "total_tokens": 150
+            }}
+        });
+        let (input, output, cache_read) = usage_from_record(&rec).unwrap();
+        assert_eq!(output, 50, "reasoning must not be added on top of output");
+        // The invariant that proves reasoning is subsumed in output_tokens.
+        assert_eq!(input + output, 150);
+        assert_eq!((input, cache_read), (100, 10));
+    }
+
+    #[test]
+    fn desktop_bundled_session_without_usage_record_reads_zero() {
+        // Desktop-bundled rollouts emit only event_msg/token_count, never a
+        // token_usage_record. We intentionally do NOT add a token_count
+        // fallback (standalone CLI — the target — writes the proper record,
+        // and a fallback would risk double-counting files that have both).
+        // Such a session must therefore degrade cleanly to zero usage, not
+        // crash. Fixture B is exactly this shape (no token_usage_record).
+        let content = std::fs::read_to_string(fixture_b()).unwrap();
+        let any_usage = content.lines().any(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| usage_from_record(&v))
+                .is_some()
+        });
+        assert!(
+            !any_usage,
+            "desktop-bundled session yields no usage records"
+        );
     }
 
     #[test]

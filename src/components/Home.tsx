@@ -137,7 +137,7 @@ export function Home() {
           <h1 className="text-base font-semibold text-ink">Agent Tarmac</h1>
           <p className="max-w-sm text-sm text-ink-faint">
             {!hasSessions
-              ? "Nothing on the board yet — waiting for Claude Code sessions to appear."
+              ? "Nothing on the board yet — waiting for agent sessions to appear."
               : allQuiet
                 ? "All quiet on the tarmac."
                 : "Select a session from the sidebar, or see what's moving below."}
