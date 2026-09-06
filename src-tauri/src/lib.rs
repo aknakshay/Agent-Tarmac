@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod backend;
 pub mod claude_bin;
 pub mod pop_out;
 pub mod pty_manager;
@@ -44,7 +45,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(session_index::SessionIndexState(Mutex::new(
-            session_index::scan(&session_index::claude_projects_dir()),
+            session_index::scan_all(),
         )))
         .manage(workspace_store::WorkspaceState(Mutex::new(
             workspace_store::Workspace::default(),

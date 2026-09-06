@@ -14,6 +14,9 @@ export interface Session {
   customTitle: string | null; // user rename; null = use transcript title
 }
 
+/** Which agent CLI owns a session. Mirrors the Rust `BackendKind` enum. */
+export type BackendKind = "claude";
+
 /** Wire shape of the Rust `SessionMeta` struct (snake_case). */
 export interface SessionMeta {
   id: string;
@@ -21,6 +24,9 @@ export interface SessionMeta {
   title: string;
   last_activity: string;
   last_role: string | null;
+  /** Owning backend; optional for back-compat with pre-backend transcripts
+   * (defaults to "claude" on the Rust side). No UI yet — badge lands later. */
+  backend?: BackendKind;
 }
 
 export interface StatusChange {

@@ -360,24 +360,30 @@ pub fn resume_session(
     workspace: State<WorkspaceState>,
     session_id: String,
 ) -> Result<(), String> {
-    let cwd = {
+    let (cwd, backend_kind) = {
         let sessions = session_index.0.lock().unwrap_or_else(|e| e.into_inner());
         let meta = sessions
             .iter()
             .find(|s| s.id == session_id)
             .ok_or_else(|| format!("unknown session: {session_id}"))?;
-        meta.cwd
+        let cwd = meta
+            .cwd
             .clone()
-            .ok_or_else(|| format!("session {session_id} has no known cwd"))?
+            .ok_or_else(|| format!("session {session_id} has no known cwd"))?;
+        (cwd, meta.backend)
     };
+
+    // Resume via the backend that owns this session, so the right binary and
+    // resume syntax are used (Claude: `claude --resume <id>`).
+    let (program, args) = crate::backend::backend_for(backend_kind).resume_argv(&session_id);
 
     manager.spawn(
         make_emitter(app.clone()),
         SpawnSpec {
             session_id: session_id.clone(),
             cwd: PathBuf::from(cwd),
-            program: claude_program(),
-            args: vec!["--resume".into(), session_id.clone()],
+            program,
+            args,
         },
     )?;
 
@@ -391,13 +397,17 @@ pub fn start_new_session(
     cwd: String,
 ) -> Result<String, String> {
     let session_id = format!("new-{}", uuid::Uuid::new_v4());
+    // A fresh session has no backend tag yet; default to Claude (the only
+    // backend that can start a brand-new session today).
+    let (program, args) =
+        crate::backend::backend_for(crate::backend::BackendKind::default()).start_argv();
     manager.spawn(
         make_emitter(app),
         SpawnSpec {
             session_id: session_id.clone(),
             cwd: PathBuf::from(cwd),
-            program: claude_program(),
-            args: vec![],
+            program,
+            args,
         },
     )?;
     // `new-*` placeholder ids are intentionally not persisted to

@@ -1,3 +1,4 @@
+use crate::backend::{self, SessionBackend};
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use serde::Serialize;
 use std::path::Path;
@@ -39,7 +40,10 @@ static CACHE: Mutex<Option<CacheEntry>> = Mutex::new(None);
 /// "message":{"usage":{...}}}` record. `None` for any other record shape
 /// (user/summary lines, or a line serde_json can't even parse — callers
 /// skip those before this is called).
-fn usage_from_record(v: &serde_json::Value) -> Option<(u64, u64, u64)> {
+///
+/// `pub` so [`crate::backend::ClaudeBackend`] can expose it as its token-usage
+/// seam; the pure parse logic stays here in the seam module.
+pub fn usage_from_record(v: &serde_json::Value) -> Option<(u64, u64, u64)> {
     if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
         return None;
     }
@@ -59,77 +63,85 @@ fn usage_from_record(v: &serde_json::Value) -> Option<(u64, u64, u64)> {
     Some((input, output, cache_read))
 }
 
-fn record_timestamp(v: &serde_json::Value) -> Option<DateTime<Utc>> {
+/// The wall-clock timestamp of one transcript record. `pub` for the same
+/// reason as [`usage_from_record`] — it's part of the token-usage seam the
+/// Claude backend exposes.
+pub fn record_timestamp(v: &serde_json::Value) -> Option<DateTime<Utc>> {
     v.get("timestamp")?.as_str()?.parse().ok()
 }
 
-/// Pure scan over `dir` (a `~/.claude/projects`-shaped directory), bucketed
-/// against the caller-supplied `today` local calendar date rather than
-/// reading the wall clock itself — keeps this directly unit-testable with
-/// fixed fixture timestamps, the same pattern `stats.ts`'s `dayKey` follows
-/// on the frontend.
-pub fn compute_stats(dir: &Path, today: NaiveDate) -> TokenStats {
+/// Pure scan over one `backend`'s transcripts under `root`, bucketed against
+/// the caller-supplied `today` local calendar date rather than reading the
+/// wall clock itself — keeps this directly unit-testable with fixed fixture
+/// timestamps, the same pattern `stats.ts`'s `dayKey` follows on the frontend.
+///
+/// The on-disk topology (which files exist) and the per-record parse
+/// (`usage_from_record`, `record_timestamp`) come from the backend; the
+/// today-vs-all-time bucketing and the mtime fast-path here are
+/// backend-agnostic.
+pub fn compute_stats(backend: &dyn SessionBackend, root: &Path, today: NaiveDate) -> TokenStats {
     let mut stats = TokenStats::default();
-    let Ok(project_dirs) = std::fs::read_dir(dir) else {
-        return stats;
-    };
-    for project_entry in project_dirs.flatten() {
-        let project_path = project_entry.path();
-        if !project_path.is_dir() {
-            continue;
-        }
-        let Ok(files) = std::fs::read_dir(&project_path) else {
+    for file_path in backend.transcript_files(root) {
+        let Ok(content) = std::fs::read_to_string(&file_path) else {
             continue;
         };
-        for file_entry in files.flatten() {
-            let file_path = file_entry.path();
-            if file_path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Ok(content) = std::fs::read_to_string(&file_path) else {
+
+        // Transcripts are append-only, so a file whose mtime falls
+        // before local midnight cannot contain any of today's
+        // records — skip the per-line timestamp parse/compare for
+        // those files entirely. Pure overhead saved on a long history
+        // of old sessions; today's own files still get the full check.
+        let could_have_today = std::fs::metadata(&file_path)
+            .and_then(|m| m.modified())
+            .map(|m| DateTime::<Local>::from(m).date_naive() >= today)
+            .unwrap_or(true);
+
+        let mut had_usage = false;
+        for line in content.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;
             };
-
-            // Transcripts are append-only, so a file whose mtime falls
-            // before local midnight cannot contain any of today's
-            // records — skip the per-line timestamp parse/compare for
-            // those files entirely. Pure overhead saved on a long history
-            // of old sessions; today's own files still get the full check.
-            let could_have_today = std::fs::metadata(&file_path)
-                .and_then(|m| m.modified())
-                .map(|m| DateTime::<Local>::from(m).date_naive() >= today)
-                .unwrap_or(true);
-
-            let mut had_usage = false;
-            for line in content.lines() {
-                let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-                    continue;
-                };
-                let Some((input, output, cache_read)) = usage_from_record(&v) else {
-                    continue;
-                };
-                had_usage = true;
-                stats.total_input += input;
-                stats.total_output += output;
-                if could_have_today {
-                    if let Some(ts) = record_timestamp(&v) {
-                        if ts.with_timezone(&Local).date_naive() == today {
-                            stats.today_input += input;
-                            stats.today_output += output;
-                            stats.today_cache_read += cache_read;
-                        }
+            let Some((input, output, cache_read)) = backend.usage_from_record(&v) else {
+                continue;
+            };
+            had_usage = true;
+            stats.total_input += input;
+            stats.total_output += output;
+            if could_have_today {
+                if let Some(ts) = backend.record_timestamp(&v) {
+                    if ts.with_timezone(&Local).date_naive() == today {
+                        stats.today_input += input;
+                        stats.today_output += output;
+                        stats.today_cache_read += cache_read;
                     }
                 }
             }
-            if had_usage {
-                stats.session_count += 1;
-            }
+        }
+        if had_usage {
+            stats.session_count += 1;
         }
     }
     stats
 }
 
-fn refresh_if_stale(dir: &Path) -> TokenStats {
+/// Sum token usage across every registered backend, each at its own root.
+/// With a single (Claude) backend this equals `compute_stats(&CLAUDE,
+/// claude_projects_dir(), today)`.
+fn compute_stats_all(today: NaiveDate) -> TokenStats {
+    let mut total = TokenStats::default();
+    for b in backend::all_backends() {
+        let s = compute_stats(*b, &b.transcripts_root(), today);
+        total.today_output += s.today_output;
+        total.today_input += s.today_input;
+        total.today_cache_read += s.today_cache_read;
+        total.total_output += s.total_output;
+        total.total_input += s.total_input;
+        total.session_count += s.session_count;
+    }
+    total
+}
+
+fn refresh_if_stale() -> TokenStats {
     let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let stale = guard
         .as_ref()
@@ -137,7 +149,7 @@ fn refresh_if_stale(dir: &Path) -> TokenStats {
         .unwrap_or(true);
     if stale {
         let today = Local::now().date_naive();
-        let stats = compute_stats(dir, today);
+        let stats = compute_stats_all(today);
         *guard = Some(CacheEntry {
             stats,
             scanned_at: Instant::now(),
@@ -148,7 +160,7 @@ fn refresh_if_stale(dir: &Path) -> TokenStats {
 
 #[tauri::command]
 pub fn token_stats() -> TokenStats {
-    refresh_if_stale(&crate::session_index::claude_projects_dir())
+    refresh_if_stale()
 }
 
 #[cfg(test)]
@@ -173,7 +185,7 @@ mod tests {
 
     #[test]
     fn buckets_today_vs_all_time_and_counts_sessions() {
-        let stats = compute_stats(&fixtures_dir(), today_from_fixture());
+        let stats = compute_stats(&backend::CLAUDE, &fixtures_dir(), today_from_fixture());
         // Only the proj-a record dated 2026-01-01 counts toward "today".
         assert_eq!(stats.today_input, 100);
         assert_eq!(stats.today_output, 50);
@@ -190,7 +202,7 @@ mod tests {
         // A "today" that matches none of the fixture timestamps: totals are
         // unaffected, today bucket stays at zero.
         let far_future = NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
-        let stats = compute_stats(&fixtures_dir(), far_future);
+        let stats = compute_stats(&backend::CLAUDE, &fixtures_dir(), far_future);
         assert_eq!(stats.today_input, 0);
         assert_eq!(stats.today_output, 0);
         assert_eq!(stats.today_cache_read, 0);
@@ -201,7 +213,11 @@ mod tests {
     #[test]
     fn missing_dir_returns_default() {
         assert_eq!(
-            compute_stats(Path::new("/nope/definitely-not-here"), today_from_fixture()),
+            compute_stats(
+                &backend::CLAUDE,
+                Path::new("/nope/definitely-not-here"),
+                today_from_fixture()
+            ),
             TokenStats::default()
         );
     }
