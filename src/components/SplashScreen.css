@@ -8,6 +8,21 @@
   branch (both [data-reduced] and the media query) holds a still lit jet.
 */
 
+/* The App wraps <SplashScreen> in this overlay so it can fade the whole
+   launch out as it lifts (the fixed .splash child inherits the opacity),
+   revealing the already-mounted app beneath. Instant under reduced motion. */
+.splash-overlay {
+  transition: opacity 380ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.splash-overlay[data-lifting="true"] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-overlay {
+    transition-duration: 120ms;
+  }
+}
+
 .splash {
   --splash-launch-ms: 1800ms;
   --splash-ease: cubic-bezier(0.4, 0, 0.2, 1);
