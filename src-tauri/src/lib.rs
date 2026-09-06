@@ -19,8 +19,8 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 /// Checks whether the `claude` binary (resolved via
-/// `claude_bin::claude_program`, same resolution `pty_manager::claude_program`
-/// uses) is runnable, for the sidebar's "no sessions found" empty-state
+/// `claude_bin::claude_program`) is runnable, for the sidebar's "no sessions
+/// found" empty-state
 /// hint. Returns the version string on success, `None` if the binary isn't
 /// found or exits non-zero — either way, never an error the frontend has to
 /// handle, since "not installed" is an expected, common state here (not a

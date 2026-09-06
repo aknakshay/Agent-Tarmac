@@ -304,13 +304,6 @@ impl PtyManager {
     }
 }
 
-/// Re-exported for callers that only import from `pty_manager` (spawn sites
-/// and `check_claude` all want the same resolved binary). See
-/// `claude_bin::claude_program` for the resolution order and caching.
-pub fn claude_program() -> String {
-    crate::claude_bin::claude_program()
-}
-
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PtyOutputPayload {

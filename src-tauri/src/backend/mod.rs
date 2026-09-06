@@ -394,7 +394,14 @@ mod tests {
     fn codex_scan_over_fixture_tree_is_codex_tagged() {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex");
         let all = CODEX.scan(&dir);
+        // 4 rollout files on disk, but the desktop-originated one is filtered
+        // out at parse time (terminal-CLI cockpit), leaving 3 CLI sessions.
         assert_eq!(all.len(), 3);
+        assert!(
+            !all.iter()
+                .any(|s| s.id == "019f3333-3333-7333-8333-00000000dddd"),
+            "the Codex Desktop session must not be indexed"
+        );
         // Newest-activity first (2026-09-06, then 2026-09-05, then 2026-08-15).
         assert!(all[0].last_activity >= all[1].last_activity);
         assert!(all[1].last_activity >= all[2].last_activity);

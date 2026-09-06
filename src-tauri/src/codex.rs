@@ -152,10 +152,12 @@ fn first_meaningful_user_text(payload: &serde_json::Value) -> Option<String> {
 /// chars of the stem (a canonical `8-4-4-4-12` uuid).
 fn uuid_from_filename(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_str()?;
-    if stem.len() < 36 {
-        return None;
-    }
-    let uuid = &stem[stem.len() - 36..];
+    // `.get(start..)` (not `&stem[start..]`) so a non-ASCII stem whose
+    // len-36 boundary lands mid-codepoint yields None instead of panicking —
+    // this runs inside a discovery `filter_map` with no catch, so one bad
+    // filename must not take down the whole scan.
+    let start = stem.len().checked_sub(36)?;
+    let uuid = stem.get(start..)?;
     // Cheap sanity check: canonical uuid hyphen positions.
     let bytes = uuid.as_bytes();
     (bytes[8] == b'-' && bytes[13] == b'-' && bytes[18] == b'-' && bytes[23] == b'-')
@@ -164,6 +166,28 @@ fn uuid_from_filename(path: &Path) -> Option<String> {
 
 fn truncate(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
+}
+
+/// Whether a `session_meta.payload.originator` marks a session as belonging to
+/// the ChatGPT Desktop app rather than the standalone `codex` CLI.
+///
+/// Agent Tarmac is a terminal-CLI cockpit: it manages sessions a user runs (or
+/// would resume) in a terminal, not the ambient conversations the ChatGPT
+/// Desktop app writes to the same `~/.codex/sessions`. On a machine with
+/// Desktop installed those Desktop rollouts vastly outnumber CLI ones (254 vs
+/// 0 on the author's machine), so surfacing them floods the sidebar with rows
+/// the user never manages here. We therefore hide Desktop sessions in v0.4.0.
+///
+/// A **denylist** ("contains `desktop`", case-insensitively) rather than a CLI
+/// allowlist: real values seen in the wild are `"Codex Desktop"` (207) and
+/// `"codex_work_desktop"` (45); an unknown *CLI* originator should still show,
+/// so only an explicit desktop marker hides a session. Missing originator ⇒
+/// kept (fail-open toward showing).
+///
+/// v0.4.0 default; a "show ChatGPT Desktop sessions" toggle is a roadmap item
+/// (no settings pane yet).
+fn is_desktop_originator(originator: &str) -> bool {
+    originator.to_ascii_lowercase().contains("desktop")
 }
 
 /// Parse one Codex rollout file into a [`SessionMeta`] tagged
@@ -208,6 +232,14 @@ pub fn parse_transcript(path: &Path) -> Option<SessionMeta> {
         match v.get("type").and_then(|t| t.as_str()) {
             Some("session_meta") => {
                 if let Some(p) = payload {
+                    // Hide ChatGPT-Desktop-app sessions — this is a terminal
+                    // cockpit (see `is_desktop_originator`). A skipped rollout
+                    // is simply not indexed.
+                    if let Some(orig) = p.get("originator").and_then(|x| x.as_str()) {
+                        if is_desktop_originator(orig) {
+                            return None;
+                        }
+                    }
                     if id.is_none() {
                         id = p.get("id").and_then(|x| x.as_str()).map(String::from);
                     }
@@ -382,19 +414,17 @@ mod tests {
     #[test]
     fn transcript_files_walks_date_shards_and_skips_non_rollouts() {
         let files = transcript_files(&fixtures_root());
-        // All three rollouts found across different YYYY/MM/DD dirs; the decoy
-        // `notes.jsonl` and `rollout-*.txt` are not.
-        assert_eq!(files.len(), 3, "found: {files:?}");
+        // Discovery is originator-blind — it finds every rollout file (the
+        // desktop-originated one included); the desktop *skip* happens later
+        // in parse_transcript. The decoy `notes.jsonl` is not a rollout.
+        assert_eq!(files.len(), 4, "found: {files:?}");
         assert!(files.iter().all(|p| is_rollout_file(p)));
-        assert!(files
-            .iter()
-            .any(|p| p.to_string_lossy().contains("2026/09/06")));
-        assert!(files
-            .iter()
-            .any(|p| p.to_string_lossy().contains("2026/08/15")));
-        assert!(files
-            .iter()
-            .any(|p| p.to_string_lossy().contains("2026/09/05")));
+        for shard in ["2026/09/06", "2026/08/15", "2026/09/05", "2026/09/07"] {
+            assert!(
+                files.iter().any(|p| p.to_string_lossy().contains(shard)),
+                "missing shard {shard}"
+            );
+        }
     }
 
     #[test]
@@ -438,6 +468,38 @@ mod tests {
     #[test]
     fn missing_file_returns_none() {
         assert!(parse_transcript(Path::new("/nope/x.jsonl")).is_none());
+    }
+
+    // A ChatGPT-Desktop-app rollout (originator "Codex Desktop"). Otherwise
+    // perfectly parseable — it must be skipped purely on originator.
+    fn fixture_desktop() -> PathBuf {
+        fixtures_root()
+            .join("2026/09/07")
+            .join("rollout-2026-09-07T10-00-00-019f3333-3333-7333-8333-00000000dddd.jsonl")
+    }
+
+    #[test]
+    fn desktop_originator_session_is_skipped() {
+        // v0.4.0: ChatGPT-Desktop sessions are hidden (terminal-CLI cockpit).
+        // The fixture has a real title + turns, so only the originator can be
+        // what drops it.
+        assert!(
+            parse_transcript(&fixture_desktop()).is_none(),
+            "a Codex Desktop rollout must not be indexed"
+        );
+    }
+
+    #[test]
+    fn is_desktop_originator_denies_desktop_keeps_cli() {
+        // Real values observed across 254 rollouts.
+        assert!(is_desktop_originator("Codex Desktop"));
+        assert!(is_desktop_originator("codex_work_desktop"));
+        assert!(is_desktop_originator("CODEX DESKTOP")); // case-insensitive
+                                                         // Non-desktop originators are kept (denylist, not allowlist), so an
+                                                         // unknown CLI-side originator still shows.
+        assert!(!is_desktop_originator("codex_cli"));
+        assert!(!is_desktop_originator("codex-chrome-extension-sidepanel"));
+        assert!(!is_desktop_originator(""));
     }
 
     #[test]
