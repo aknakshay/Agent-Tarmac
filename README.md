@@ -77,7 +77,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full checklist before opening a P
 | Embedded terminal | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Restore workspace after reboot | ✅ | ➖ persistence, not one-click restore | ❌ | ❌ | ➖ unclear |
 | Pop out to a real terminal, keep tracking | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Platform | macOS (Tauri) | Node/Electron | macOS/Linux/Windows (Tauri) | macOS (Tauri) | Linux only (GTK4) |
+| Platform | macOS (full support) · Linux (compiles, runtime untested — contributions welcome, see [#13](https://github.com/aknakshay/Agent-Tarmac/issues/13)) | Node/Electron | macOS/Linux/Windows (Tauri) | macOS (Tauri) | Linux only (GTK4) |
 
 FleetCode is the closest competitor — multi-session embedded terminals with `--resume` persistence and git-worktree isolation — but it only manages sessions it created and has no activity status. Agent Tarmac is mission control for every session on the machine, with live status, regardless of what started it.
 
@@ -97,7 +97,7 @@ Tracked as GitHub issues:
 - Token/cost telemetry
 - Settings pane (notification toggle, clear-metadata action)
 - Web/mobile remote access
-- Linux/Windows support
+- Linux runtime support (compiles + CI-checked today; see [#13](https://github.com/aknakshay/Agent-Tarmac/issues/13)) and Windows support
 - Persist which session tabs were open across a restart (which panes were open, not just which were live) and reopen them without auto-resuming dormant ones
 
 ## License

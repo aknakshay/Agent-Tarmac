@@ -5,6 +5,12 @@
 //! Ghostty isn't installed. The session id is then tracked as "external" so
 //! `status_loop` can keep showing it as running while its transcript is
 //! still being written to.
+//!
+//! Platform note: the launch mechanics (which terminal binaries exist, and
+//! how each one is invoked) are inherently OS-specific and live behind
+//! `#[cfg(target_os = "...")]`. Everything else in this module — script
+//! generation, the external-session tracking set, the stop/bring-back
+//! lifecycle — is shared.
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -56,8 +62,9 @@ impl ExternalSessions {
 }
 
 /// Which app ended up hosting the popped-out session — one of the keys in
-/// [`TERMINAL_KEYS`] (plus `"terminal"` for Terminal.app). A plain string so
-/// the frontend's label map is the single place that knows display names.
+/// [`TERMINAL_KEYS`] on macOS (plus `"terminal"` for Terminal.app), or one of
+/// [`LINUX_TERMINAL_KEYS`] on Linux. A plain string so the frontend's label
+/// map is the single place that knows display names.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PopOutResult {
@@ -66,6 +73,7 @@ pub struct PopOutResult {
 
 /// Supported third-party terminals as `(key, .app bundle name)`. Terminal.app
 /// is not listed — it ships with macOS and is always offered as the floor.
+#[cfg(target_os = "macos")]
 pub const TERMINAL_KEYS: &[(&str, &str)] = &[
     ("ghostty", "Ghostty"),
     ("iterm", "iTerm"),
@@ -74,10 +82,28 @@ pub const TERMINAL_KEYS: &[(&str, &str)] = &[
     ("alacritty", "Alacritty"),
 ];
 
+/// Supported Linux terminal emulators as `(key, binary name)`, probed via
+/// `PATH` rather than an `/Applications`-style bundle check. Listed in the
+/// order they're tried when no terminal is explicitly requested. Unlike
+/// macOS, there's no universally-installed floor terminal, so a system with
+/// none of these on `PATH` simply has no pop-out option — see issue #13 for
+/// the porting guide on adding more.
+#[cfg(target_os = "linux")]
+pub const LINUX_TERMINAL_KEYS: &[(&str, &str)] = &[
+    ("gnome-terminal", "gnome-terminal"),
+    ("konsole", "konsole"),
+    ("xfce4-terminal", "xfce4-terminal"),
+    ("kitty", "kitty"),
+    ("alacritty", "alacritty"),
+    ("wezterm", "wezterm"),
+    ("foot", "foot"),
+];
+
 /// Returns the keys of installed terminals, in [`TERMINAL_KEYS`] priority
 /// order, with `"terminal"` (always present on macOS) appended last. The
 /// existence probe is injected so the ordering logic is testable without a
 /// filesystem.
+#[cfg(target_os = "macos")]
 pub fn detect_installed_terminals(app_exists: impl Fn(&str) -> bool) -> Vec<String> {
     let mut found: Vec<String> = TERMINAL_KEYS
         .iter()
@@ -88,7 +114,21 @@ pub fn detect_installed_terminals(app_exists: impl Fn(&str) -> bool) -> Vec<Stri
     found
 }
 
+/// Linux counterpart of [`detect_installed_terminals`]: returns the keys of
+/// [`LINUX_TERMINAL_KEYS`] whose binary the injected probe finds, in priority
+/// order. No unconditional floor entry is appended — there's no terminal
+/// guaranteed to exist the way Terminal.app is on macOS.
+#[cfg(target_os = "linux")]
+pub fn detect_installed_terminals_linux(bin_exists: impl Fn(&str) -> bool) -> Vec<String> {
+    LINUX_TERMINAL_KEYS
+        .iter()
+        .filter(|(_, bin)| bin_exists(bin))
+        .map(|(key, _)| (*key).to_string())
+        .collect()
+}
+
 /// True if `<name>.app` exists in /Applications or ~/Applications.
+#[cfg(target_os = "macos")]
 fn macos_app_exists(bundle: &str) -> bool {
     if Path::new(&format!("/Applications/{bundle}.app")).exists() {
         return true;
@@ -99,9 +139,32 @@ fn macos_app_exists(bundle: &str) -> bool {
     false
 }
 
+/// True if an executable named `bin` exists in any directory on `PATH` — the
+/// same lookup a shell does for a bare command name, reused here to probe for
+/// terminal emulator binaries rather than `claude` (see
+/// `claude_bin::resolve_claude_program` for that one).
+#[cfg(target_os = "linux")]
+fn binary_on_path(bin: &str) -> bool {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path_var).any(|dir| dir.join(bin).is_file())
+}
+
 #[tauri::command]
 pub fn detect_terminals() -> Vec<String> {
-    detect_installed_terminals(macos_app_exists)
+    #[cfg(target_os = "macos")]
+    {
+        detect_installed_terminals(macos_app_exists)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        detect_installed_terminals_linux(binary_on_path)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Vec::new()
+    }
 }
 
 /// The currently-tracked external (popped-out) session ids — lets the
@@ -136,6 +199,7 @@ pub fn pop_out_script(cwd: &str, id: &str) -> String {
 
 /// Escapes `s` for embedding inside a double-quoted AppleScript string
 /// literal: backslash and double-quote both need escaping.
+#[cfg(target_os = "macos")]
 fn applescript_string_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -177,6 +241,7 @@ impl Invocation {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn ghostty_invocation(script_path: &str) -> Invocation {
     Invocation::new(
         "open",
@@ -190,6 +255,7 @@ fn ghostty_invocation(script_path: &str) -> Invocation {
     )
 }
 
+#[cfg(target_os = "macos")]
 fn terminal_invocation(script_path: &str) -> Invocation {
     // `do script "<string>"` is evaluated TWICE: AppleScript parses the
     // double-quoted string literal, then Terminal hands the resulting text
@@ -213,6 +279,7 @@ fn terminal_invocation(script_path: &str) -> Invocation {
 
 /// iTerm2's `write text` — like Terminal's `do script` — hands the string to
 /// a shell, so it gets the same two-layer escaping as `terminal_invocation`.
+#[cfg(target_os = "macos")]
 fn iterm_invocation(script_path: &str) -> Invocation {
     let shell_quoted = format!("'{}'", shell_single_quote_escape(script_path));
     let escaped = applescript_string_escape(&shell_quoted);
@@ -236,6 +303,7 @@ fn iterm_invocation(script_path: &str) -> Invocation {
 /// pass the script path as a plain argv element (no shell layer), so they
 /// need no extra escaping; the two AppleScript-based terminals get the
 /// two-layer treatment inside their builders.
+#[cfg(target_os = "macos")]
 pub fn invocation_for(terminal: &str, script_path: &str) -> Result<Invocation, String> {
     match terminal {
         "ghostty" => Ok(ghostty_invocation(script_path)),
@@ -275,6 +343,42 @@ pub fn invocation_for(terminal: &str, script_path: &str) -> Result<Invocation, S
     }
 }
 
+/// Linux counterpart of [`invocation_for`]. Each of these launches the
+/// terminal binary directly (no `open`-style app-bundle indirection), passing
+/// the pop-out script as the command to run. Verified against each emulator's
+/// CLI contract at the time of writing; if a given install's flag dialect has
+/// since drifted, that's exactly the kind of thing issue #13 is tracking.
+#[cfg(target_os = "linux")]
+pub fn invocation_for_linux(terminal: &str, script_path: &str) -> Result<Invocation, String> {
+    match terminal {
+        "gnome-terminal" => Ok(Invocation::new(
+            "gnome-terminal",
+            vec!["--".into(), script_path.into()],
+        )),
+        "konsole" => Ok(Invocation::new(
+            "konsole",
+            vec!["-e".into(), script_path.into()],
+        )),
+        "xfce4-terminal" => Ok(Invocation::new(
+            "xfce4-terminal",
+            vec!["-e".into(), script_path.into()],
+        )),
+        "kitty" => Ok(Invocation::new("kitty", vec![script_path.into()])),
+        "alacritty" => Ok(Invocation::new(
+            "alacritty",
+            vec!["-e".into(), script_path.into()],
+        )),
+        "wezterm" => Ok(Invocation::new(
+            "wezterm",
+            vec!["start".into(), "--".into(), script_path.into()],
+        )),
+        "foot" => Ok(Invocation::new("foot", vec![script_path.into()])),
+        other => Err(format!(
+            "unsupported terminal on Linux: {other} — see issue #13"
+        )),
+    }
+}
+
 /// Runs `invocation` and reports whether it succeeded (spawned and exited
 /// with a success status). Separated from the invocation-building logic
 /// above so tests can build+assert on invocations without ever calling this.
@@ -298,6 +402,7 @@ fn run(invocation: &Invocation) -> Result<(), String> {
 /// Tries Ghostty first, falls back to Terminal.app on failure. `launch_via`
 /// is injected so tests can observe which invocations would run without
 /// actually spawning any process.
+#[cfg(target_os = "macos")]
 fn launch_via(
     script_path: &str,
     mut launch: impl FnMut(&Invocation) -> Result<(), String>,
@@ -309,6 +414,26 @@ fn launch_via(
 
     let terminal = terminal_invocation(script_path);
     launch(&terminal).map(|()| "terminal".to_string())
+}
+
+/// Linux counterpart of [`launch_via`]: tries every [`LINUX_TERMINAL_KEYS`]
+/// entry in priority order, returning the first that launches successfully.
+/// Unlike macOS there's no guaranteed floor, so exhausting the list is a
+/// real (if unusual) failure mode — surfaced with a pointer to issue #13.
+#[cfg(target_os = "linux")]
+fn launch_via_linux(
+    script_path: &str,
+    mut launch: impl FnMut(&Invocation) -> Result<(), String>,
+) -> Result<String, String> {
+    for (key, _) in LINUX_TERMINAL_KEYS {
+        let Ok(invocation) = invocation_for_linux(key, script_path) else {
+            continue;
+        };
+        if launch(&invocation).is_ok() {
+            return Ok((*key).to_string());
+        }
+    }
+    Err("no supported terminal found on this system — see issue #13".to_string())
 }
 
 /// Outlasts PtyManager::kill's 5s SIGKILL escalation, so a stubborn process
@@ -448,14 +573,35 @@ pub fn pop_out_to_ghostty(
 
     // An explicitly chosen terminal launches exactly that terminal (no
     // fallback — a user who picked WezTerm should get an error, not
-    // Terminal.app). No choice keeps the historical Ghostty→Terminal chain.
+    // Terminal.app). No choice keeps the historical Ghostty→Terminal chain
+    // on macOS, or tries every detected terminal in order on Linux.
     let app_used = match terminal.as_deref() {
         Some(key) => {
+            #[cfg(target_os = "macos")]
             let invocation = invocation_for(key, &script_path_str)?;
+            #[cfg(target_os = "linux")]
+            let invocation = invocation_for_linux(key, &script_path_str)?;
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            let invocation: Invocation = return Err(format!(
+                "pop-out is not supported on this platform — see issue #13"
+            ));
             run(&invocation)?;
             key.to_string()
         }
-        None => launch_via(&script_path_str, run)?,
+        None => {
+            #[cfg(target_os = "macos")]
+            {
+                launch_via(&script_path_str, run)?
+            }
+            #[cfg(target_os = "linux")]
+            {
+                launch_via_linux(&script_path_str, run)?
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                return Err("pop-out is not supported on this platform — see issue #13".to_string());
+            }
+        }
     };
 
     external.insert(&session_id);
@@ -612,45 +758,6 @@ mod tests {
     }
 
     #[test]
-    fn ghostty_invocation_shape() {
-        let inv = ghostty_invocation("/tmp/pop_out/abc.sh");
-        assert_eq!(inv.program, "open");
-        assert_eq!(
-            inv.args,
-            vec!["-na", "Ghostty", "--args", "-e", "/tmp/pop_out/abc.sh"]
-        );
-    }
-
-    #[test]
-    fn terminal_invocation_shape() {
-        let inv = terminal_invocation("/tmp/pop_out/abc.sh");
-        assert_eq!(inv.program, "osascript");
-        assert!(inv.args.contains(&"-e".to_string()));
-        let joined = inv.args.join(" ");
-        // The path must be shell-single-quoted INSIDE the AppleScript
-        // string, since Terminal hands the do-script text to a shell.
-        assert!(joined.contains("do script \"'/tmp/pop_out/abc.sh'\""));
-        assert!(joined.contains("tell application \"Terminal\" to activate"));
-    }
-
-    #[test]
-    fn terminal_invocation_stays_inert_for_a_path_with_spaces_and_quotes() {
-        // A defense-in-depth check: even if validate_session_id ever let a
-        // hostile character through, the generated do-script text should
-        // still treat the whole path as one inert shell argument at BOTH
-        // the AppleScript-string layer and the shell layer Terminal applies
-        // on top of it.
-        let hostile = "/tmp/pop_out/x`touch /tmp/pwned`'.sh";
-        let inv = terminal_invocation(hostile);
-        let joined = inv.args.join(" ");
-        // Shell layer: the whole path sits inside a single-quoted argument
-        // (with the embedded `'` escaped via '"'"'), so a shell evaluating
-        // the do-script text would treat it as literal text, not run it as
-        // a command substitution.
-        assert!(joined.contains("do script \"'/tmp/pop_out/x`touch /tmp/pwned`'\\\"'\\\"'.sh'\""));
-    }
-
-    #[test]
     fn validate_session_id_accepts_uuids_and_new_placeholders() {
         assert!(validate_session_id("f47ac10b-58cc-4372-a567-0e02b2c3d479").is_ok());
         assert!(validate_session_id("new-f47ac10b-58cc-4372-a567-0e02b2c3d479").is_ok());
@@ -663,96 +770,6 @@ mod tests {
         assert!(validate_session_id("x$(touch /tmp/pwned)").is_err());
         assert!(validate_session_id("has space").is_err());
         assert!(validate_session_id("").is_err());
-    }
-
-    #[test]
-    fn launch_via_uses_ghostty_when_it_succeeds() {
-        let mut calls: Vec<Invocation> = Vec::new();
-        let result = launch_via("/tmp/script.sh", |inv| {
-            calls.push(inv.clone());
-            Ok(())
-        });
-        assert_eq!(result, Ok("ghostty".to_string()));
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].program, "open");
-    }
-
-    #[test]
-    fn launch_via_falls_back_to_terminal_when_ghostty_fails() {
-        let mut calls: Vec<Invocation> = Vec::new();
-        let result = launch_via("/tmp/script.sh", |inv| {
-            let is_ghostty = inv.program == "open";
-            calls.push(inv.clone());
-            if is_ghostty {
-                Err("ghostty not installed".into())
-            } else {
-                Ok(())
-            }
-        });
-        assert_eq!(result, Ok("terminal".to_string()));
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].program, "open");
-        assert_eq!(calls[1].program, "osascript");
-    }
-
-    #[test]
-    fn detect_installed_terminals_orders_and_always_includes_terminal() {
-        // Only kitty + Ghostty "installed": priority order preserved,
-        // Terminal.app appended last unconditionally.
-        let found = detect_installed_terminals(|b| b == "kitty" || b == "Ghostty");
-        assert_eq!(found, vec!["ghostty", "kitty", "terminal"]);
-
-        // Nothing installed: Terminal.app is still the floor.
-        let none = detect_installed_terminals(|_| false);
-        assert_eq!(none, vec!["terminal"]);
-    }
-
-    #[test]
-    fn invocation_for_covers_every_supported_key() {
-        for (key, _) in TERMINAL_KEYS {
-            assert!(invocation_for(key, "/tmp/s.sh").is_ok(), "key {key}");
-        }
-        assert!(invocation_for("terminal", "/tmp/s.sh").is_ok());
-        assert!(invocation_for("emacs-shell", "/tmp/s.sh").is_err());
-    }
-
-    #[test]
-    fn wezterm_and_kitty_pass_script_as_plain_argv() {
-        // `open --args` forms carry the path as an argv element — no shell
-        // layer, so a hostile-looking path must appear verbatim, unescaped.
-        let hostile = "/tmp/it's a `dir`/s.sh";
-        let wez = invocation_for("wezterm", hostile).unwrap();
-        assert_eq!(wez.program, "open");
-        assert_eq!(wez.args.last().unwrap(), hostile);
-        let kitty = invocation_for("kitty", hostile).unwrap();
-        assert_eq!(kitty.args.last().unwrap(), hostile);
-    }
-
-    #[test]
-    fn iterm_invocation_stays_inert_for_a_path_with_spaces_and_quotes() {
-        // Same double-layer contract as terminal_invocation: shell-quoted
-        // innermost, then AppleScript-escaped.
-        let inv = invocation_for("iterm", "/tmp/it's a `dir`/s.sh").unwrap();
-        assert_eq!(inv.program, "osascript");
-        let write_text = inv
-            .args
-            .iter()
-            .find(|a| a.contains("write text"))
-            .expect("write text arg present");
-        assert!(
-            write_text.contains("'\\\"'\\\"'"),
-            "single-quote escape survives both layers: {write_text}"
-        );
-        assert!(
-            !write_text.contains("write text \"/tmp"),
-            "path must not be bare in the shell layer"
-        );
-    }
-
-    #[test]
-    fn launch_via_errors_when_both_fail() {
-        let result = launch_via("/tmp/script.sh", |_| Err("nope".into()));
-        assert!(result.is_err());
     }
 
     #[test]
@@ -953,5 +970,198 @@ mod tests {
             |_| {},
         );
         assert!(result.is_err());
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+
+    #[test]
+    fn ghostty_invocation_shape() {
+        let inv = ghostty_invocation("/tmp/pop_out/abc.sh");
+        assert_eq!(inv.program, "open");
+        assert_eq!(
+            inv.args,
+            vec!["-na", "Ghostty", "--args", "-e", "/tmp/pop_out/abc.sh"]
+        );
+    }
+
+    #[test]
+    fn terminal_invocation_shape() {
+        let inv = terminal_invocation("/tmp/pop_out/abc.sh");
+        assert_eq!(inv.program, "osascript");
+        assert!(inv.args.contains(&"-e".to_string()));
+        let joined = inv.args.join(" ");
+        // The path must be shell-single-quoted INSIDE the AppleScript
+        // string, since Terminal hands the do-script text to a shell.
+        assert!(joined.contains("do script \"'/tmp/pop_out/abc.sh'\""));
+        assert!(joined.contains("tell application \"Terminal\" to activate"));
+    }
+
+    #[test]
+    fn terminal_invocation_stays_inert_for_a_path_with_spaces_and_quotes() {
+        // A defense-in-depth check: even if validate_session_id ever let a
+        // hostile character through, the generated do-script text should
+        // still treat the whole path as one inert shell argument at BOTH
+        // the AppleScript-string layer and the shell layer Terminal applies
+        // on top of it.
+        let hostile = "/tmp/pop_out/x`touch /tmp/pwned`'.sh";
+        let inv = terminal_invocation(hostile);
+        let joined = inv.args.join(" ");
+        // Shell layer: the whole path sits inside a single-quoted argument
+        // (with the embedded `'` escaped via '"'"'), so a shell evaluating
+        // the do-script text would treat it as literal text, not run it as
+        // a command substitution.
+        assert!(joined.contains("do script \"'/tmp/pop_out/x`touch /tmp/pwned`'\\\"'\\\"'.sh'\""));
+    }
+
+    #[test]
+    fn launch_via_uses_ghostty_when_it_succeeds() {
+        let mut calls: Vec<Invocation> = Vec::new();
+        let result = launch_via("/tmp/script.sh", |inv| {
+            calls.push(inv.clone());
+            Ok(())
+        });
+        assert_eq!(result, Ok("ghostty".to_string()));
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].program, "open");
+    }
+
+    #[test]
+    fn launch_via_falls_back_to_terminal_when_ghostty_fails() {
+        let mut calls: Vec<Invocation> = Vec::new();
+        let result = launch_via("/tmp/script.sh", |inv| {
+            let is_ghostty = inv.program == "open";
+            calls.push(inv.clone());
+            if is_ghostty {
+                Err("ghostty not installed".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result, Ok("terminal".to_string()));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].program, "open");
+        assert_eq!(calls[1].program, "osascript");
+    }
+
+    #[test]
+    fn launch_via_errors_when_both_fail() {
+        let result = launch_via("/tmp/script.sh", |_| Err("nope".into()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn detect_installed_terminals_orders_and_always_includes_terminal() {
+        // Only kitty + Ghostty "installed": priority order preserved,
+        // Terminal.app appended last unconditionally.
+        let found = detect_installed_terminals(|b| b == "kitty" || b == "Ghostty");
+        assert_eq!(found, vec!["ghostty", "kitty", "terminal"]);
+
+        // Nothing installed: Terminal.app is still the floor.
+        let none = detect_installed_terminals(|_| false);
+        assert_eq!(none, vec!["terminal"]);
+    }
+
+    #[test]
+    fn invocation_for_covers_every_supported_key() {
+        for (key, _) in TERMINAL_KEYS {
+            assert!(invocation_for(key, "/tmp/s.sh").is_ok(), "key {key}");
+        }
+        assert!(invocation_for("terminal", "/tmp/s.sh").is_ok());
+        assert!(invocation_for("emacs-shell", "/tmp/s.sh").is_err());
+    }
+
+    #[test]
+    fn wezterm_and_kitty_pass_script_as_plain_argv() {
+        // `open --args` forms carry the path as an argv element — no shell
+        // layer, so a hostile-looking path must appear verbatim, unescaped.
+        let hostile = "/tmp/it's a `dir`/s.sh";
+        let wez = invocation_for("wezterm", hostile).unwrap();
+        assert_eq!(wez.program, "open");
+        assert_eq!(wez.args.last().unwrap(), hostile);
+        let kitty = invocation_for("kitty", hostile).unwrap();
+        assert_eq!(kitty.args.last().unwrap(), hostile);
+    }
+
+    #[test]
+    fn iterm_invocation_stays_inert_for_a_path_with_spaces_and_quotes() {
+        // Same double-layer contract as terminal_invocation: shell-quoted
+        // innermost, then AppleScript-escaped.
+        let inv = invocation_for("iterm", "/tmp/it's a `dir`/s.sh").unwrap();
+        assert_eq!(inv.program, "osascript");
+        let write_text = inv
+            .args
+            .iter()
+            .find(|a| a.contains("write text"))
+            .expect("write text arg present");
+        assert!(
+            write_text.contains("'\\\"'\\\"'"),
+            "single-quote escape survives both layers: {write_text}"
+        );
+        assert!(
+            !write_text.contains("write text \"/tmp"),
+            "path must not be bare in the shell layer"
+        );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::*;
+
+    #[test]
+    fn detect_installed_terminals_linux_orders_and_has_no_floor() {
+        let found = detect_installed_terminals_linux(|b| b == "kitty" || b == "gnome-terminal");
+        assert_eq!(found, vec!["gnome-terminal", "kitty"]);
+
+        // Unlike macOS, nothing installed means no options at all.
+        let none = detect_installed_terminals_linux(|_| false);
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn invocation_for_linux_covers_every_supported_key() {
+        for (key, _) in LINUX_TERMINAL_KEYS {
+            assert!(invocation_for_linux(key, "/tmp/s.sh").is_ok(), "key {key}");
+        }
+        assert!(invocation_for_linux("emacs-shell", "/tmp/s.sh").is_err());
+    }
+
+    #[test]
+    fn gnome_terminal_and_konsole_pass_script_as_plain_argv() {
+        // Direct-exec launches carry the path as an argv element — no shell
+        // layer, so a hostile-looking path must appear verbatim, unescaped.
+        let hostile = "/tmp/it's a `dir`/s.sh";
+        let gnome = invocation_for_linux("gnome-terminal", hostile).unwrap();
+        assert_eq!(gnome.program, "gnome-terminal");
+        assert_eq!(gnome.args.last().unwrap(), hostile);
+
+        let konsole = invocation_for_linux("konsole", hostile).unwrap();
+        assert_eq!(konsole.program, "konsole");
+        assert_eq!(konsole.args.last().unwrap(), hostile);
+    }
+
+    #[test]
+    fn launch_via_linux_uses_first_success_in_priority_order() {
+        let mut calls: Vec<String> = Vec::new();
+        let result = launch_via_linux("/tmp/script.sh", |inv| {
+            calls.push(inv.program.clone());
+            if inv.program == "gnome-terminal" {
+                Err("not installed".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(result, Ok("konsole".to_string()));
+        assert_eq!(calls, vec!["gnome-terminal", "konsole"]);
+    }
+
+    #[test]
+    fn launch_via_linux_errors_with_issue_pointer_when_all_fail() {
+        let result = launch_via_linux("/tmp/script.sh", |_| Err("nope".into()));
+        let err = result.unwrap_err();
+        assert!(err.contains("issue #13"), "unexpected error: {err}");
     }
 }

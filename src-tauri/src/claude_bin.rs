@@ -22,11 +22,29 @@ use std::time::Duration;
 
 const BIN_NAME: &str = "claude";
 
+/// The default login shell to fall back on when `$SHELL` isn't set. macOS
+/// ships zsh as the default since Catalina; everywhere else assume bash,
+/// which is present on essentially every Linux distro and container image.
+#[cfg(target_os = "macos")]
+const DEFAULT_LOGIN_SHELL: &str = "/bin/zsh";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_LOGIN_SHELL: &str = "/bin/bash";
+
+/// The login shell to probe with: `$SHELL` if set, otherwise
+/// [`DEFAULT_LOGIN_SHELL`]. This keeps macOS behavior byte-identical to the
+/// old hardcoded `/bin/zsh` for any environment that doesn't set `$SHELL`
+/// (the common case), while letting a user on any platform with an unusual
+/// login shell (fish, a custom zsh install, etc.) get their own env/PATH
+/// resolved rather than a different shell's.
+fn login_shell_path() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| DEFAULT_LOGIN_SHELL.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Login-shell environment hydration
 // ---------------------------------------------------------------------------
 
-/// Parse lines from `/bin/zsh -lc 'env'` output into a `KEY=value` map.
+/// Parse lines from `<login shell> -lc 'env'` output into a `KEY=value` map.
 ///
 /// Rules (defensive):
 /// - Split on the *first* `=` only so values that themselves contain `=` are
@@ -49,12 +67,12 @@ pub fn parse_env_output(raw: &str) -> HashMap<String, String> {
     map
 }
 
-/// Run `/bin/zsh -lc 'env'` once, bounded by `timeout`, and return the
+/// Run `<login shell> -lc 'env'` once, bounded by `timeout`, and return the
 /// parsed environment. Returns an empty map on timeout or exec failure.
 fn fetch_login_shell_env(timeout: Duration) -> HashMap<String, String> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = std::process::Command::new("/bin/zsh")
+        let result = std::process::Command::new(login_shell_path())
             .args(["-lc", "env"])
             .output()
             .ok()
@@ -182,14 +200,14 @@ fn probe_current_path() -> Option<String> {
     None
 }
 
-/// Runs `/bin/zsh -lc 'command -v claude'` to ask the user's login shell
+/// Runs `<login shell> -lc 'command -v claude'` to ask the user's login shell
 /// (which sources their profile/rc files, unlike a bare-PATH GUI process)
 /// where `claude` lives. Bounded by a timeout so a hung shell never blocks
 /// startup indefinitely.
 fn probe_login_shell(timeout: Duration) -> Option<String> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = std::process::Command::new("/bin/zsh")
+        let result = std::process::Command::new(login_shell_path())
             .args(["-lc", "command -v claude"])
             .output()
             .ok()

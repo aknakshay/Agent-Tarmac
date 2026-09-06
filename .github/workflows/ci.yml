@@ -18,3 +18,34 @@ jobs:
       - run: cargo test
         working-directory: src-tauri
       - run: npm run tauri build -- --no-bundle
+
+  # Compiles-and-is-honest, not feature parity: exercises the cfg(target_os
+  # = "linux") launch paths added in pop_out.rs/claude_bin.rs and catches any
+  # other Linux compile breakage. Runtime behavior on Linux (does the right
+  # terminal actually pop up, notifications, etc.) is NOT verified here — see
+  # issue #13 for what's still open.
+  linux:
+    name: "linux (compiles, untested at runtime)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri v2 Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy, rustfmt" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
