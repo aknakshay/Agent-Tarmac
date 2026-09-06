@@ -275,17 +275,28 @@ pub fn record_timestamp(v: &serde_json::Value) -> Option<DateTime<Utc>> {
 /// Substrings that, in the stripped tail of Codex pty output, suggest the CLI
 /// is waiting on the user (an approval / choice prompt) rather than working.
 ///
-/// Best-effort and **unverified against a live `codex` TUI** — no binary was
-/// installed during this task. Task 5 refines these, ideally replacing the
-/// screen-scrape with Codex's explicit `event_msg` `task_started`/
-/// `task_complete` transcript markers, which are a far more robust activity
-/// signal than tail matching. Kept distinct from Claude's patterns rather than
-/// blindly identical.
+/// Tuned against a **live `codex` 0.153.4 TUI** (task 3 smoke test): the
+/// directory-trust gate ("Do you trust…" + "Press enter to continue") and
+/// numbered choice lists were observed verbatim on a real `codex resume`.
+/// Note the selection arrow is `›` (U+203A), NOT Claude's `❯` (U+276F) —
+/// both are listed so a numbered prompt matches whichever a given codex
+/// build renders. The approval-dialog strings ("Allow command", "Do you
+/// want", "Yes, and don't ask again") match Codex's documented exec/patch
+/// approval shapes; kept as-is pending a live approval to confirm.
+///
+/// This tail scrape is the fast path for *blocking* prompts. The slower
+/// "assistant finished, now waiting" signal rides on `last_role` instead:
+/// a completed Codex turn leaves the last role-bearing `response_item` as
+/// `assistant`, which `derive_status` turns into `NeedsYou` after the quiet
+/// window — so no dedicated `task_complete` transcript hook is needed.
 const PROMPT_PATTERNS: &[&str] = &[
+    "Do you trust",
+    "Press enter to continue",
     "Allow command",
     "Allow Codex",
     "Do you want",
     "❯ 1.",
+    "› 1.",
     "Yes, and don't ask again",
 ];
 
@@ -460,7 +471,17 @@ mod tests {
     fn prompt_detection_matches_codex_shapes() {
         assert!(tail_looks_like_prompt("Allow command `rm -rf`?\n❯ 1. Yes"));
         assert!(tail_looks_like_prompt("Do you want to apply this patch?"));
+        // Verified verbatim against live codex 0.153.4 (task 3 smoke test):
+        // the directory-trust gate and its `›`-arrow numbered choice list.
+        assert!(tail_looks_like_prompt(
+            "Do you trust the contents of this directory?\n› 1. Yes, continue  2. No, quit"
+        ));
+        assert!(tail_looks_like_prompt("Press enter to continue"));
         assert!(!tail_looks_like_prompt("Compiling foo v0.1.0"));
+        // The idle input box ("› Ask Codex to do anything") must NOT trip the
+        // prompt scrape — it's always present in the TUI, so matching it would
+        // pin every running Codex session to NeedsYou.
+        assert!(!tail_looks_like_prompt("› Ask Codex to do anything"));
     }
 
     #[test]

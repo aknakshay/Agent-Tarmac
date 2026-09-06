@@ -43,6 +43,16 @@ describe("useDeck", () => {
     expect(useDeck.getState().sessions["a"].badge).toBe(true);
   });
 
+  it("threads backend through, defaulting a metaless session to claude", () => {
+    useDeck.getState().setSessions([
+      { id: "cx", cwd: "/p", title: "t", last_activity: "2026-09-05T10:00:00Z", last_role: "assistant", backend: "codex" },
+      { id: "cl", cwd: "/p", title: "t", last_activity: "2026-09-05T10:00:00Z", last_role: "assistant" },
+    ]);
+    expect(useDeck.getState().sessions["cx"].backend).toBe("codex");
+    // No backend on the wire (pre-backend transcript) reads as claude.
+    expect(useDeck.getState().sessions["cl"].backend).toBe("claude");
+  });
+
   it("focus clears badge and opens pane", () => {
     useDeck.getState().setSessions([{ id: "a", cwd: "/p", title: "t", last_activity: "2026-09-05T10:00:00Z", last_role: null }]);
     useDeck.getState().setStatus("a", "needsYou");

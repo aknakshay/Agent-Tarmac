@@ -18,6 +18,12 @@
   --color-accent: oklch(72% 0.14 258);
   --color-working: oklch(76% 0.16 152);
   --color-needs-you: oklch(79% 0.15 70);
+
+  /* Codex-session marker. A violet held clear of the blue accent (258),
+     the green "working" (152) and the amber "needs-you" (70) status hues,
+     so a Codex tag reads as "different agent", never as a status. Claude
+     sessions carry no tag — the unmarked row is the default. */
+  --color-codex: oklch(74% 0.13 305);
 }
 
 :root {

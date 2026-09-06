@@ -185,6 +185,7 @@ export const useDeck = create<DeckState>()((set, get) => ({
         lastSeenAt,
         tags: prev?.tags ?? cached?.tags ?? [],
         customTitle: prev?.customTitle ?? cached?.custom_title ?? null,
+        backend: meta.backend ?? "claude",
       };
     }
     for (const [id, session] of Object.entries(existing)) {
