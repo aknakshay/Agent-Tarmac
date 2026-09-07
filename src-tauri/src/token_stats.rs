@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::State;
+use tauri::Manager;
 
 /// Aggregated agent token usage across every transcript on disk, summed over
 /// all backends (Claude + Codex) — backs the Home screen's "tokenmaxxing"
@@ -323,9 +323,10 @@ fn refresh_if_stale(cache_state: &SessionCacheState, cache_path: Option<&Path>) 
 
         // Clone JUST the token map out from under the cache lock, then compute
         // (a possibly ~35 s cold read of every surface) with NO lock held, so
-        // the session watcher and startup scan aren't stalled behind us. This
-        // command already runs off the UI thread via `invoke`, so the window
-        // never blocks; Home shows its last-known / zero number until we return.
+        // the session watcher and startup scan aren't stalled behind us. The
+        // `token_stats` command runs this on Tauri's blocking pool (see there),
+        // never the UI thread, so the window stays responsive; Home shows its
+        // last-known / zero number until we return.
         let mut tokens = {
             let pc = cache_state.0.lock().unwrap_or_else(|e| e.into_inner());
             pc.tokens.clone()
@@ -352,9 +353,21 @@ fn refresh_if_stale(cache_state: &SessionCacheState, cache_path: Option<&Path>) 
 }
 
 #[tauri::command]
-pub fn token_stats(app: tauri::AppHandle, cache: State<SessionCacheState>) -> TokenStats {
-    let path = crate::session_cache::cache_path(&app);
-    refresh_if_stale(&cache, path.as_deref())
+pub async fn token_stats(app: tauri::AppHandle) -> Result<TokenStats, ()> {
+    // CRITICAL: a plain synchronous `#[tauri::command]` runs on Tauri's MAIN
+    // thread, so the ~35 s cold read below would freeze the entire webview —
+    // no splash animation, a sidebar that can't paint the sessions the
+    // background scan already found, the whole UI locked until it returns.
+    // `spawn_blocking` moves it onto the dedicated blocking pool (never the UI
+    // thread, never an async worker), keeping the window fully responsive while
+    // the tokens compute; Home renders its `tokensLoaded=false` state meanwhile.
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = crate::session_cache::cache_path(&app);
+        let cache = app.state::<SessionCacheState>();
+        refresh_if_stale(&cache, path.as_deref())
+    })
+    .await
+    .map_err(|_| ())
 }
 
 #[cfg(test)]

@@ -121,18 +121,16 @@ function App() {
   }, [commandBarOpen, newSessionOpen, openIds, focus, goHome, activeId, toggleMarkedUnread]);
 
   useEffect(() => {
-    // The session list now arrives via the `sessions_updated` event from the
-    // non-blocking startup scan: the backend index starts EMPTY (lib.rs) and a
-    // background thread fills it off the UI thread — first from the persisted
-    // cache (instant), then from a fresh disk reconcile. So we no longer call
-    // `list_sessions` here (it would return the still-empty index and flip
-    // `sessionsLoaded` before any session had loaded, which made RestoreBanner
-    // evaluate — and clear — live ids against an empty set).
-    //
-    // We only prime the persisted read/unread, tags, favorites, and rename
-    // caches so the first `sessions_updated` batch paints with them already
-    // applied; `hydrateMeta` also back-fills a batch that happened to land
-    // first (it merges into whatever sessions are present — see store.ts).
+    // The session list arrives two ways, both needed: live via the
+    // `sessions_updated` event from the non-blocking startup scan (the backend
+    // index starts EMPTY in lib.rs and a background thread fills it — first from
+    // the persisted cache, then a fresh disk reconcile), AND via a one-shot
+    // `list_sessions` backfill below that recovers the startup emit if it raced
+    // ahead of this webview subscribing (see that call's comment). We prime the
+    // persisted read/unread, tags, favorites, and rename caches first so the
+    // first batch (whichever path delivers it) paints with them already applied;
+    // `hydrateMeta` also back-fills a batch that lands before it (it merges into
+    // whatever sessions are present — see store.ts).
     invoke<Workspace>("get_workspace")
       .then(hydrateMeta)
       .catch((err) => console.error("Failed to load workspace meta", err));
@@ -176,6 +174,25 @@ function App() {
     const ptyExited = listen<PtyExitedPayload>("pty_exited", (event) =>
       writeExited(event.payload.sessionId),
     );
+
+    // Backfill the current index once, AFTER the listeners above are set up.
+    // The background startup scan (start_background_scan, in lib.rs .setup)
+    // emits its `sessions_updated`/`scan_*` events almost immediately on a warm
+    // cache — often BEFORE this webview has finished loading and subscribed, so
+    // those one-shot events are lost and the sidebar would spin on its loader
+    // until the next file-watcher tick (a transcript write) happened to re-emit.
+    // `list_sessions` reads `SessionIndexState`, which both the scan and the
+    // watcher keep current (they write it before emitting), so this recovers
+    // whatever the scan already published. Guarded to a non-empty result so it
+    // never flips `sessionsLoaded` true against a still-empty index mid-scan —
+    // that premature flip is what made RestoreBanner clear live ids, and why
+    // this call was originally removed; the guard keeps that fix intact while
+    // closing the event-race hole.
+    invoke<SessionMeta[]>("list_sessions")
+      .then((metas) => {
+        if (metas.length > 0) setSessions(metas);
+      })
+      .catch((err) => console.error("list_sessions backfill failed", err));
 
     return () => {
       sessionsUpdated.then((unlisten) => unlisten());
