@@ -22,6 +22,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/badge") {
+      return badge(env);
+    }
     if (url.pathname === "/stats") {
       return stats(url, env);
     }
@@ -92,6 +95,66 @@ async function stats(url, env) {
     status: 200,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+// --- public badge ---------------------------------------------------------
+// GET /badge -> a shields.io "endpoint" badge showing total reach:
+// GitHub .dmg downloads (all releases) + unique app installs from telemetry.
+// Public (no token) — it's just one aggregate number, which is the whole point
+// of a badge. Note this can slightly over-count a person who both downloaded
+// AND ran the app; at this scale that's fine and both inputs are already soft.
+async function badge(env) {
+  const gh = await githubDownloadsCached(env);
+  const kv = env.TARMAC_KV;
+  const installs = parseInt((kv && (await kv.get("count:installs"))) || "0", 10);
+  return new Response(
+    JSON.stringify({
+      schemaVersion: 1,
+      label: "downloads",
+      message: String(gh + installs),
+      color: "brightgreen",
+      cacheSeconds: 1800,
+    }),
+    { status: 200, headers: { "content-type": "application/json; charset=utf-8" } },
+  );
+}
+
+// Sum of every release asset's download_count, cached 30 min in KV to spare
+// the GitHub rate limit. Unauthenticated calls from Cloudflare's shared egress
+// IPs get rate-limited (403) unpredictably, so we ALSO keep a never-expiring
+// "last-good" value and fall back to it on any failure — the badge then never
+// drops to 0 just because one refresh got throttled. Set GITHUB_TOKEN to make
+// the refresh reliable (raises the limit to 5000/hr).
+async function githubDownloadsCached(env) {
+  const kv = env.TARMAC_KV;
+  if (kv) {
+    const fresh = await kv.get("gh:downloads");
+    if (fresh) return parseInt(fresh, 10);
+  }
+  const headers = { "User-Agent": "agent-tarmac-telemetry", Accept: "application/vnd.github+json" };
+  if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+
+  let ok = false;
+  let sum = 0;
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=100`, { headers });
+    if (resp.ok) {
+      const releases = await resp.json();
+      for (const r of releases) for (const a of r.assets || []) sum += a.download_count || 0;
+      ok = true;
+    }
+  } catch (_e) {
+    ok = false;
+  }
+
+  if (ok && kv) {
+    await kv.put("gh:downloads", String(sum), { expirationTtl: 1800 });
+    await kv.put("gh:downloads:lastgood", String(sum)); // no expiry
+    return sum;
+  }
+  // Refresh failed — use the last value we ever read successfully.
+  const lastGood = kv && (await kv.get("gh:downloads:lastgood"));
+  return lastGood ? parseInt(lastGood, 10) : 0;
 }
 
 // --- GitHub passthrough (cached) -----------------------------------------

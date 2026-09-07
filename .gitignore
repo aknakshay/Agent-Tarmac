@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .superpowers/
 PRODUCT.md
+
+# Cloudflare Wrangler local state
+telemetry/.wrangler/
