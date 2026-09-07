@@ -21,7 +21,8 @@ const REPO: &str = "aknakshay/Agent-Tarmac";
 ///
 /// To enable: deploy `telemetry/` and set this to your Worker's `/check` URL,
 /// e.g. `Some("https://agent-tarmac-telemetry.<subdomain>.workers.dev/check")`.
-const TELEMETRY_ENDPOINT: Option<&str> = None;
+const TELEMETRY_ENDPOINT: Option<&str> =
+    Some("https://agent-tarmac-telemetry.akshaynagpal1995.workers.dev/check");
 
 /// Env var that disables the anonymous launch ping regardless of
 /// [`TELEMETRY_ENDPOINT`]. Set to anything (`AGENT_TARMAC_NO_TELEMETRY=1`) to

@@ -6,7 +6,7 @@ compatibility_date = "2024-11-01"
 # then paste the printed id below.
 [[kv_namespaces]]
 binding = "TARMAC_KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "c1cf6af0ac404279b399ab373a8c1e71"
 
 # Secrets (set with `wrangler secret put <NAME>`, do NOT commit them):
 #   STATS_TOKEN    required to read GET /stats
