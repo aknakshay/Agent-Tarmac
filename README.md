@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/aknakshay/Agent-Tarmac/releases/latest"><img src="https://img.shields.io/github/v/release/aknakshay/Agent-Tarmac?label=download&color=2ea44f" alt="Latest release" /></a>
+  <a href="https://github.com/aknakshay/Agent-Tarmac/releases"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fagent-tarmac-telemetry.akshaynagpal1995.workers.dev%2Fbadge" alt="Downloads" /></a>
   <a href="https://github.com/aknakshay/Agent-Tarmac/actions/workflows/ci.yml"><img src="https://github.com/aknakshay/Agent-Tarmac/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
 </p>
