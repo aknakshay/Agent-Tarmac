@@ -353,7 +353,7 @@ fn refresh_if_stale(cache_state: &SessionCacheState, cache_path: Option<&Path>) 
 }
 
 #[tauri::command]
-pub async fn token_stats(app: tauri::AppHandle) -> Result<TokenStats, ()> {
+pub async fn token_stats(app: tauri::AppHandle) -> Result<TokenStats, String> {
     // CRITICAL: a plain synchronous `#[tauri::command]` runs on Tauri's MAIN
     // thread, so the ~35 s cold read below would freeze the entire webview —
     // no splash animation, a sidebar that can't paint the sessions the
@@ -367,7 +367,7 @@ pub async fn token_stats(app: tauri::AppHandle) -> Result<TokenStats, ()> {
         refresh_if_stale(&cache, path.as_deref())
     })
     .await
-    .map_err(|_| ())
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
