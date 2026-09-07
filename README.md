@@ -108,6 +108,12 @@ Tracked as GitHub issues:
 - Linux runtime support (compiles + CI-checked today; see [#13](https://github.com/aknakshay/Agent-Tarmac/issues/13)) and Windows support
 - Persist which session tabs were open across a restart (which panes were open, not just which were live) and reopen them without auto-resuming dormant ones
 
+## Privacy
+
+Agent Tarmac reads your local session transcripts and nothing leaves your machine — with one small, opt-out exception. On launch it makes a single anonymous request to a [tiny counter endpoint](telemetry/) that tells the maintainer how many people are running the app (the GitHub download badge only sees `.dmg` downloads, not source builds). That request contains only a **random install id the app generates locally**, the app **version**, and the **OS** — no account, no machine or user identifier, no file paths, no session content. The same request doubles as the update check.
+
+Don't want even that? Set `AGENT_TARMAC_NO_TELEMETRY=1` and the app checks for updates against GitHub directly and sends nothing. (In source builds telemetry is off entirely unless a maintainer has configured an endpoint.)
+
 ## License
 
 [MIT](LICENSE)

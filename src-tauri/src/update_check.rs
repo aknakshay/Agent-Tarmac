@@ -6,10 +6,27 @@
 use serde::Serialize;
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 // confirmed at publish time
 const REPO: &str = "aknakshay/Agent-Tarmac";
+
+/// Optional telemetry + update-check endpoint (a Cloudflare Worker — see
+/// `telemetry/` at the repo root). When set, the launch check hits this URL
+/// instead of GitHub directly: the Worker counts the anonymous launch and
+/// returns the latest-release JSON in GitHub's shape, so one call does both.
+/// `None` (the default) means NO telemetry — the check goes straight to
+/// GitHub exactly as before. Any failure against this endpoint falls back to
+/// GitHub, so update checks never depend on it being up.
+///
+/// To enable: deploy `telemetry/` and set this to your Worker's `/check` URL,
+/// e.g. `Some("https://agent-tarmac-telemetry.<subdomain>.workers.dev/check")`.
+const TELEMETRY_ENDPOINT: Option<&str> = None;
+
+/// Env var that disables the anonymous launch ping regardless of
+/// [`TELEMETRY_ENDPOINT`]. Set to anything (`AGENT_TARMAC_NO_TELEMETRY=1`) to
+/// opt out; the update check then always goes straight to GitHub.
+const OPT_OUT_ENV: &str = "AGENT_TARMAC_NO_TELEMETRY";
 
 const USER_AGENT: &str = "agent-tarmac-update-check";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -65,27 +82,77 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     false
 }
 
-fn fetch_latest() -> Option<(String, String)> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-
+/// One best-effort HTTP GET, returning the body as a string. `None` on any
+/// failure (offline, timeout, non-2xx, non-UTF-8).
+fn http_get(url: &str) -> Option<String> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(CONNECT_TIMEOUT)
         .timeout(OVERALL_TIMEOUT)
         .build();
 
-    let body = agent
-        .get(&url)
+    agent
+        .get(url)
         .set("User-Agent", USER_AGENT)
         .call()
         .ok()?
         .into_string()
-        .ok()?;
+        .ok()
+}
 
-    parse_latest(&body)
+/// Whether the user has opted out of the anonymous launch ping.
+fn opted_out() -> bool {
+    std::env::var_os(OPT_OUT_ENV).is_some()
+}
+
+/// A stable, anonymous per-install id: a random UUID generated once and
+/// persisted to `app_data_dir/install-id`. No account, machine, or user
+/// identifier is involved — it exists only so the endpoint can distinguish
+/// "a new install" from "the same install checking again" (unique vs. total).
+/// `None` if the data dir can't be resolved; the ping then omits the id.
+fn install_id(app: &AppHandle) -> Option<String> {
+    let dir = app.path().app_data_dir().ok()?;
+    let path = dir.join("install-id");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(&path, &id);
+    Some(id)
+}
+
+/// Builds the telemetry `/check` URL with the anonymous install id, current
+/// version, and OS as query params — or `None` when telemetry is unconfigured
+/// or opted out, in which case the caller goes straight to GitHub.
+fn telemetry_url(app: &AppHandle) -> Option<String> {
+    if opted_out() {
+        return None;
+    }
+    let base = TELEMETRY_ENDPOINT?;
+    let version = env!("CARGO_PKG_VERSION");
+    let id = install_id(app).unwrap_or_default();
+    Some(format!("{base}?id={id}&v={version}&os=macos"))
+}
+
+/// Fetches the latest release `(version, url)`. Prefers the telemetry endpoint
+/// (which counts the launch and returns the same GitHub JSON shape), and falls
+/// back to GitHub directly on any miss — so update checks work identically
+/// whether or not telemetry is configured or reachable.
+fn fetch_latest(app: &AppHandle) -> Option<(String, String)> {
+    if let Some(url) = telemetry_url(app) {
+        if let Some(parsed) = http_get(&url).and_then(|body| parse_latest(&body)) {
+            return Some(parsed);
+        }
+    }
+    let github = format!("https://api.github.com/repos/{REPO}/releases/latest");
+    http_get(&github).and_then(|body| parse_latest(&body))
 }
 
 fn check_once(app: &AppHandle) {
-    let Some((latest, url)) = fetch_latest() else {
+    let Some((latest, url)) = fetch_latest(app) else {
         return;
     };
 
