@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TerminalPane } from "./components/TerminalPane";
 import { CommandBar } from "./components/CommandBar";
 import { NewSessionDialog } from "./components/NewSessionDialog";
+import { HelpPanel } from "./components/HelpPanel";
 import { RestoreBanner } from "./components/RestoreBanner";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Home } from "./components/Home";
@@ -35,6 +36,22 @@ function App() {
 
   const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  // First run: pop the help panel once, keyed off a localStorage flag rather
+  // than any session/onboarding state, so it fires exactly once per install
+  // regardless of what's already in the deck. Wrapped in try/catch — some
+  // webview contexts (private browsing, restricted storage) throw on access —
+  // and failing closed here just means it won't auto-open, not a crash.
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem("agent-tarmac:onboarded")) {
+        setHelpOpen(true);
+      }
+    } catch {
+      // Storage unavailable — skip first-run onboarding silently.
+    }
+  }, []);
 
   // The launch splash plays once per app launch, as a full-viewport overlay
   // above the already-mounted app. Startup is instant now (the scan fills the
@@ -86,6 +103,14 @@ function App() {
       }
 
       if (isAppEditableTarget) return;
+
+      if (e.key === "/") {
+        e.preventDefault();
+        setHelpOpen((open) => !open);
+        setCommandBarOpen(false);
+        setNewSessionOpen(false);
+        return;
+      }
 
       if (e.shiftKey && e.key.toLowerCase() === "u") {
         e.preventDefault();
@@ -209,6 +234,7 @@ function App() {
       <Sidebar
         onOpenCommandBar={() => setCommandBarOpen(true)}
         onOpenNewSession={() => setNewSessionOpen(true)}
+        onOpenHelp={() => setHelpOpen(true)}
       />
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col">
@@ -245,6 +271,19 @@ function App() {
           onStarted={(sessionId, cwd) => {
             focus(sessionId, cwd);
             setNewSessionOpen(false);
+          }}
+        />
+      )}
+
+      {helpOpen && (
+        <HelpPanel
+          onClose={() => {
+            setHelpOpen(false);
+            try {
+              localStorage.setItem("agent-tarmac:onboarded", "1");
+            } catch {
+              // Storage unavailable — first-run help will just reopen next launch.
+            }
           }}
         />
       )}

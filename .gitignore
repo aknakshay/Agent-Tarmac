@@ -27,3 +27,6 @@ PRODUCT.md
 
 # Cloudflare Wrangler local state
 telemetry/.wrangler/
+
+# Cloudflare Wrangler local state
+.wrangler/

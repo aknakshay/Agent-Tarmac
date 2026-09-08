@@ -27,9 +27,10 @@ function byLastActivityDesc(a: Session, b: Session): number {
 interface SidebarProps {
   onOpenCommandBar(): void;
   onOpenNewSession(): void;
+  onOpenHelp(): void;
 }
 
-export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
+export function Sidebar({ onOpenCommandBar, onOpenNewSession, onOpenHelp }: SidebarProps) {
   const sessions = useDeck((state) => state.sessions);
   const sessionsLoaded = useDeck((state) => state.sessionsLoaded);
   const scanning = useDeck((state) => state.scanning);
@@ -185,6 +186,15 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession }: SidebarProps) {
           className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint hover:bg-surface-hover hover:text-ink-muted"
         >
           <PlusIcon />
+        </button>
+        <button
+          type="button"
+          onClick={onOpenHelp}
+          aria-label="Help"
+          title="Help (⌘/)"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-ink-faint hover:bg-surface-hover hover:text-ink-muted"
+        >
+          <HelpIcon />
         </button>
       </div>
 
@@ -459,6 +469,23 @@ function PlusIcon() {
       aria-hidden="true"
     >
       <path d="M8 3v10M3 8h10" />
+    </svg>
+  );
+}
+
+function HelpIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 fill-none stroke-current"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="8" cy="8" r="6" />
+      <path d="M6.2 6.2a1.8 1.8 0 1 1 2.55 2.4c-.5.45-.75.75-.75 1.4" />
+      <path d="M8 11.4h.01" />
     </svg>
   );
 }
