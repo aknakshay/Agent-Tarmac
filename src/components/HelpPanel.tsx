@@ -1,31 +1,58 @@
 import { useEffect } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { JetIcon } from "./JetIcon";
+import { JetMark } from "./jetMark";
+import "./HelpPanel.css";
 
 interface HelpPanelProps {
   onClose(): void;
 }
 
 const SHORTCUTS: Array<{ keys: string; description: string }> = [
-  { keys: "⌘K", description: "Jump to / search sessions" },
+  { keys: "⌘K", description: "Jump to a session" },
   { keys: "⌘N", description: "New session" },
   { keys: "⌘0", description: "Home" },
-  { keys: "⌘1–9", description: "Jump to the Nth open session" },
-  { keys: "⌘⇧U", description: "Toggle unread on the active session" },
-  { keys: "⌘/", description: "Open this help anytime" },
+  { keys: "⌘1–9", description: "Nth open session" },
+  { keys: "⌘⇧U", description: "Toggle unread" },
+  { keys: "⌘/", description: "Open this help" },
 ];
 
-const JUMP_BAR_SHORTCUTS: Array<{ keys: string; description: string }> = [
-  { keys: "↑ / ↓", description: "Move selection" },
-  { keys: "Enter", description: "Open" },
-  { keys: "Esc", description: "Close" },
+const CAPABILITIES: Array<{ icon: React.ReactNode; title: string; body: string }> = [
+  {
+    icon: <GridIcon />,
+    title: "Every session, one window",
+    body: "Claude Code and Codex — even sessions you started in another terminal.",
+  },
+  {
+    icon: <BellIcon />,
+    title: "Know who needs you",
+    body: "A live status on each session, with a badge for the one that's blocked on you.",
+  },
+  {
+    icon: <EjectIcon />,
+    title: "Pop out anytime",
+    body: "Eject a session to Ghostty, iTerm2, or Terminal — it keeps tracking it.",
+  },
+  {
+    icon: <RestoreIcon />,
+    title: "Survive reboots",
+    body: "After a restart, Restore brings every running session back in one click.",
+  },
+];
+
+const LEGEND: Array<{ status: "working" | "needsYou" | "idle" | "dormant"; label: string }> = [
+  { status: "working", label: "Working" },
+  { status: "needsYou", label: "Needs you" },
+  { status: "idle", label: "Idle" },
+  { status: "dormant", label: "Dormant" },
 ];
 
 /**
- * Reference-card modal explaining the app: what it does, the status legend,
- * what you can do, and the keyboard shortcuts. Mirrors CommandBar's overlay
- * + centered card pattern, but doesn't need list navigation, so Esc/backdrop
- * click/close-button are the only interactions.
+ * First-run welcome + reference card. Opens once on first launch and anytime
+ * via ⌘/ or the sidebar ? button. Leans on the app's launch-splash language (a
+ * JetMark on a tarmac gradient with a receding runway line) so the first thing
+ * a new user sees after takeoff feels continuous. Esc / backdrop / the Get
+ * started button all dismiss.
  */
 export function HelpPanel({ onClose }: HelpPanelProps) {
   useEffect(() => {
@@ -46,91 +73,99 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-start justify-center bg-black/50 pt-[10vh]"
+      className="help-overlay fixed inset-0 z-40 flex items-start justify-center bg-black/60 pt-[8vh]"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Help"
-        className="z-50 max-h-[78vh] w-full max-w-lg overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+        aria-label="Welcome to Agent Tarmac"
+        className="help-card z-50 flex max-h-[84vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl ring-1 ring-black/20"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <div>
-            <h2 className="text-sm font-semibold text-ink">Agent Tarmac</h2>
-            <p className="text-xs text-ink-faint">Mission control for your coding agents.</p>
-          </div>
+        {/* Hero */}
+        <div className="help-hero shrink-0 px-6 pt-7 pb-6 text-center">
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
             title="Close (Esc)"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-faint hover:bg-surface-hover hover:text-ink-muted"
+            className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-md text-ink-faint transition-colors hover:bg-white/5 hover:text-ink-muted"
           >
             <CloseIcon />
           </button>
+          <div className="relative z-10 mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-app-bg/60 shadow-lg">
+            <JetMark className="h-8 w-8" />
+          </div>
+          <p className="relative z-10 text-[11px] font-semibold uppercase tracking-[0.14em] text-accent">
+            Welcome aboard
+          </p>
+          <h2 className="relative z-10 mt-1 text-lg font-semibold text-ink">Agent Tarmac</h2>
+          <p className="relative z-10 mt-0.5 text-sm text-ink-muted">
+            Mission control for your coding agents.
+          </p>
         </div>
 
-        <div className="thin-scrollbar max-h-[calc(78vh-52px)] overflow-y-auto px-4 py-4 text-sm text-ink-muted">
-          <Section title="The idea">
-            <p>
-              The sidebar lists every Claude Code and Codex session on your machine — even ones you
-              started in another terminal — grouped by project. The status dot on each tells you
-              which one needs you.
-            </p>
-          </Section>
+        {/* Body */}
+        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <div className="space-y-3">
+            {CAPABILITIES.map((cap) => (
+              <div key={cap.title} className="flex gap-3">
+                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-hover text-ink-muted">
+                  {cap.icon}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-ink">{cap.title}</p>
+                  <p className="text-xs leading-relaxed text-ink-faint">{cap.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
 
-          <Section title="Status legend">
-            <ul className="space-y-1.5">
-              <LegendRow status="working" label="Working" description="Actively running." />
-              <LegendRow
-                status="needsYou"
-                label="Needs you"
-                description="Blocked on you — shows a badge + optional notification."
-              />
-              <LegendRow status="idle" label="Idle" description="Finished, no input required." />
-              <LegendRow status="dormant" label="Dormant" description="Hasn't run in a while." />
-            </ul>
-          </Section>
+          <Divider />
 
-          <Section title="What you can do">
-            <ul className="list-disc space-y-1 pl-4">
-              <li>Click a session to open its terminal right in the app.</li>
-              <li>Start a new one with ⌘N.</li>
-              <li>Pop a session out to a real terminal (Ghostty/iTerm2/Terminal) and it keeps tracking it.</li>
-              <li>After a reboot, Restore brings everything back.</li>
-              <li>See your all-time token usage on Home.</li>
-            </ul>
-          </Section>
+          <div>
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+              Status at a glance
+            </h3>
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
+              {LEGEND.map((row) => (
+                <span key={row.status} className="flex items-center gap-1.5 text-xs text-ink-muted">
+                  <JetIcon status={row.status} className="h-3 w-3" />
+                  {row.label}
+                </span>
+              ))}
+            </div>
+          </div>
 
-          <Section title="Keyboard shortcuts">
-            <table className="w-full border-collapse text-xs">
-              <tbody>
-                {SHORTCUTS.map((row) => (
-                  <ShortcutRow key={row.keys} {...row} />
-                ))}
-              </tbody>
-            </table>
-            <p className="mt-2 text-xs text-ink-faint">Inside the jump bar:</p>
-            <table className="w-full border-collapse text-xs">
-              <tbody>
-                {JUMP_BAR_SHORTCUTS.map((row) => (
-                  <ShortcutRow key={row.keys} {...row} />
-                ))}
-              </tbody>
-            </table>
-          </Section>
+          <Divider />
 
-          <div className="mt-4 flex items-center gap-3 border-t border-border pt-3 text-xs text-ink-faint">
+          <div>
+            <h3 className="mb-2.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+              Keyboard shortcuts
+            </h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+              {SHORTCUTS.map((row) => (
+                <div key={row.keys} className="flex items-center gap-2">
+                  <kbd className="keycap">{row.keys}</kbd>
+                  <span className="min-w-0 truncate text-xs text-ink-muted">{row.description}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border px-6 py-3.5">
+          <div className="flex items-center gap-2.5 text-xs text-ink-faint">
             <a
               href="https://github.com/aknakshay/Agent-Tarmac"
               onClick={openLink("https://github.com/aknakshay/Agent-Tarmac")}
               target="_blank"
               rel="noreferrer"
-              className="hover:text-ink-muted"
+              className="transition-colors hover:text-ink-muted"
             >
-              GitHub repo
+              GitHub
             </a>
             <span aria-hidden="true">·</span>
             <a
@@ -138,54 +173,85 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
               onClick={openLink("https://github.com/aknakshay/Agent-Tarmac/issues")}
               target="_blank"
               rel="noreferrer"
-              className="hover:text-ink-muted"
+              className="transition-colors hover:text-ink-muted"
             >
               Report an issue
             </a>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-app-bg transition-opacity hover:opacity-90"
+          >
+            Get started
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Divider() {
+  return <div className="my-4 h-px bg-border" />;
+}
+
+function GridIcon() {
   return (
-    <section className="mb-4 last:mb-0">
-      <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-faint">{title}</h3>
-      {children}
-    </section>
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 fill-none stroke-current" strokeWidth={1.5} aria-hidden="true">
+      <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+    </svg>
   );
 }
 
-function LegendRow({
-  status,
-  label,
-  description,
-}: {
-  status: "working" | "needsYou" | "idle" | "dormant";
-  label: string;
-  description: string;
-}) {
+function BellIcon() {
   return (
-    <li className="flex items-start gap-2">
-      <JetIcon status={status} className="mt-0.5 h-3 w-3" />
-      <span>
-        <span className="font-medium text-ink">{label}</span>
-        <span className="text-ink-faint"> — {description}</span>
-      </span>
-    </li>
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 fill-none stroke-current"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7a4 4 0 0 1 8 0c0 3 1 4 1 4H3s1-1 1-4Z" />
+      <path d="M6.5 13a1.5 1.5 0 0 0 3 0" />
+    </svg>
   );
 }
 
-function ShortcutRow({ keys, description }: { keys: string; description: string }) {
+function EjectIcon() {
   return (
-    <tr className="border-b border-border last:border-0">
-      <td className="w-24 py-1.5 pr-3 align-top">
-        <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-ink-faint">{keys}</kbd>
-      </td>
-      <td className="py-1.5 text-ink-muted">{description}</td>
-    </tr>
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 fill-none stroke-current"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 10H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v2" />
+      <path d="M9 7l4-4M13 3v3.5M13 3H9.5" />
+      <path d="M8 13H5" />
+    </svg>
+  );
+}
+
+function RestoreIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 fill-none stroke-current"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 8a5 5 0 1 1 1.6 3.7" />
+      <path d="M3 12.5V9.5H6" />
+    </svg>
   );
 }
 

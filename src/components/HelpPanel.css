@@ -1,0 +1,83 @@
+/* Entrance: the card rises and settles, the backdrop fades. Kept subtle so it
+   reads as "arriving" rather than bouncing. Disabled under reduced-motion. */
+.help-overlay {
+  animation: help-fade 160ms ease-out both;
+}
+.help-card {
+  animation: help-rise 240ms cubic-bezier(0.16, 0.84, 0.3, 1) both;
+}
+@keyframes help-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes help-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .help-overlay,
+  .help-card {
+    animation: none;
+  }
+}
+
+/* Hero: the same dark-tarmac language as the launch splash — a soft accent glow
+   overhead, a runway centerline receding beneath the jet. */
+.help-hero {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      130% 90% at 50% -10%,
+      color-mix(in oklch, var(--color-accent) 22%, transparent),
+      transparent 68%
+    ),
+    linear-gradient(180deg, var(--color-surface-hover), var(--color-surface));
+}
+/* Receding runway centerline behind the jet mark. */
+.help-hero::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 2px;
+  height: 42%;
+  transform: translateX(-50%);
+  background: repeating-linear-gradient(
+    to top,
+    color-mix(in oklch, var(--color-ink) 22%, transparent) 0 8px,
+    transparent 8px 20px
+  );
+  -webkit-mask-image: linear-gradient(to top, black, transparent);
+  mask-image: linear-gradient(to top, black, transparent);
+}
+
+/* Raised keycap — the tactile detail the old bordered table lacked. */
+.keycap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.4rem;
+  height: 1.4rem;
+  padding: 0 0.4rem;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-ink-muted);
+  background: linear-gradient(180deg, var(--color-surface-hover), var(--color-surface));
+  border: 1px solid var(--color-border);
+  border-bottom-width: 2px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
+}

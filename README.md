@@ -33,6 +33,7 @@ It's agent-agnostic by design — it manages **Claude Code and Codex** today, wi
 - **Restore workspace** — after a reboot, one click respawns everything that was running.
 - **Pop out to a real terminal** — eject any session to your terminal of choice (Ghostty, iTerm2, Terminal…); Agent Tarmac keeps tracking it via transcript watching.
 - **Stop** — a graceful `SIGTERM` to a session's process group, no orphaned processes.
+- **Built-in guide** — a first-run welcome and a keyboard-shortcut reference, reopenable anytime with `⌘/`.
 
 ## Install
 
