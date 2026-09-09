@@ -39,7 +39,7 @@ It's agent-agnostic by design — it manages **Claude Code and Codex** today, wi
 
 **[⬇ Download the latest release](https://github.com/aknakshay/Agent-Tarmac/releases/latest)** — grab the `.dmg` (Apple Silicon), open it, and drag Agent Tarmac to Applications.
 
-> **First launch:** the app isn't notarized yet, so macOS won't open it on a double-click. Right-click it in Applications → **Open** → **Open** — once. After that it launches normally. (Notarized builds and one-click auto-update are on the [roadmap](#roadmap).)
+Signed and notarized by Apple, so it opens with a normal double-click — no Gatekeeper warnings.
 
 You'll want the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) and/or [Codex](https://openai.com/codex/) on your `PATH` — Agent Tarmac drives them; it checks for `claude` and tells you if it's missing.
 
@@ -99,7 +99,7 @@ FleetCode is the closest competitor — multi-session embedded terminals with `-
 
 Tracked as GitHub issues:
 
-- **Next up: notarized builds + signed auto-update** — no more right-click-to-open, and one-click in-place updates (the in-app check currently notifies and links to the GitHub release page)
+- **Next up: signed auto-update** — one-click in-place updates (the in-app check currently notifies and links to the GitHub release page; builds are already signed + notarized)
 - Gemini backend support (Claude Code and Codex ship today)
 - Git-worktree isolation per session
 - tmux backend (alternative to the native PTY manager)

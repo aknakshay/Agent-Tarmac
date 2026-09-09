@@ -1,6 +1,6 @@
 [package]
 name = "agent-tarmac"
-version = "0.4.7"
+version = "0.4.8"
 description = "Mission control for your coding agents — a desktop dashboard over every Claude Code and Codex session on the machine."
 authors = ["Agent Tarmac contributors"]
 edition = "2021"
