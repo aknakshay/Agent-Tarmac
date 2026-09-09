@@ -389,11 +389,22 @@ pub fn start_new_session(
     manager: State<PtyManager>,
     cwd: String,
 ) -> Result<String, String> {
-    let session_id = format!("new-{}", uuid::Uuid::new_v4());
+    // Mint the real session id up front, rather than a throwaway `new-*`
+    // placeholder, and pass it to the CLI via `start_argv` so Claude creates
+    // *this* session instead of minting its own. Previously the app tracked
+    // a placeholder id while `claude` wrote a different uuid to its own
+    // transcript; when that real id later got resumed, the PtyManager
+    // dedupe guard in `spawn` (keyed on session_id) didn't recognize it as
+    // already running, so a second `claude` process would spawn on the same
+    // session and fork the transcript. Pinning the id here means the id the
+    // app tracks, the id the CLI writes to disk, and the id the watcher
+    // surfaces are all identical from the start, so `is_running` catches
+    // every subsequent spawn attempt on it.
+    let session_id = uuid::Uuid::new_v4().to_string();
     // A fresh session has no backend tag yet; default to Claude (the only
     // backend that can start a brand-new session today).
     let (program, args) =
-        crate::backend::backend_for(crate::backend::BackendKind::default()).start_argv();
+        crate::backend::backend_for(crate::backend::BackendKind::default()).start_argv(&session_id);
     manager.spawn(
         make_emitter(app),
         SpawnSpec {
@@ -403,8 +414,6 @@ pub fn start_new_session(
             args,
         },
     )?;
-    // `new-*` placeholder ids are intentionally not persisted to
-    // live_session_ids -- see workspace_store::add_live_session.
     Ok(session_id)
 }
 

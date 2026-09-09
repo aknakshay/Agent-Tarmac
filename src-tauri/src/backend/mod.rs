@@ -86,8 +86,15 @@ pub trait SessionBackend: Send + Sync {
     /// (Claude: `claude --resume <id>`; Codex: `codex resume <id>`).
     fn resume_argv(&self, session_id: &str) -> (String, Vec<String>);
 
-    /// The `(program, args)` to spawn a fresh session (no id yet).
-    fn start_argv(&self) -> (String, Vec<String>);
+    /// The `(program, args)` to spawn a fresh session pinned to `session_id`.
+    ///
+    /// Claude accepts `--session-id <uuid>`, which makes the CLI *create*
+    /// exactly that session instead of minting its own — so the id the app
+    /// tracks from the moment it spawns is the same id the CLI writes to its
+    /// transcript, with no placeholder-to-real-id gap. Codex has no
+    /// equivalent flag today, so its impl ignores `session_id` and returns
+    /// the bare start argv (a follow-up once Codex supports pinning).
+    fn start_argv(&self, session_id: &str) -> (String, Vec<String>);
 
     /// The bare CLI binary name (`claude`, `codex`) — the process name a
     /// popped-out `resume` runs under. Used to build [`external_resume_pattern`]
@@ -188,8 +195,11 @@ impl SessionBackend for ClaudeBackend {
         )
     }
 
-    fn start_argv(&self) -> (String, Vec<String>) {
-        (self.resolve_binary(), vec![])
+    fn start_argv(&self, session_id: &str) -> (String, Vec<String>) {
+        (
+            self.resolve_binary(),
+            vec!["--session-id".to_string(), session_id.to_string()],
+        )
     }
 
     fn bin_name(&self) -> &'static str {
@@ -258,9 +268,12 @@ impl SessionBackend for CodexBackend {
         )
     }
 
-    fn start_argv(&self) -> (String, Vec<String>) {
-        // Bare `codex` opens a fresh interactive session. Verified against
-        // codex 0.153.4 (task 3).
+    fn start_argv(&self, _session_id: &str) -> (String, Vec<String>) {
+        // Codex has no `--session-id`-style flag to pin a fresh session to a
+        // caller-chosen id today, so the id is ignored and this stays bare
+        // `codex` (opens a fresh interactive session, verified against codex
+        // 0.153.4, task 3). Only Claude's `start_new_session` path pins ids
+        // today; wiring Codex up is a follow-up once it exposes a way to.
         (self.resolve_binary(), vec![])
     }
 
@@ -359,8 +372,17 @@ mod tests {
 
     #[test]
     fn codex_start_argv_is_bare() {
-        let (_program, args) = CODEX.start_argv();
+        let (_program, args) = CODEX.start_argv("abc-123");
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn claude_start_argv_pins_session_id() {
+        let (_program, args) = CLAUDE.start_argv("abc-123");
+        assert_eq!(
+            args,
+            vec!["--session-id".to_string(), "abc-123".to_string()]
+        );
     }
 
     #[test]
