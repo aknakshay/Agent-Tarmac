@@ -14,6 +14,7 @@ const SHORTCUTS: Array<{ keys: string; description: string }> = [
   { keys: "⌘0", description: "Home" },
   { keys: "⌘1–9", description: "Nth open session" },
   { keys: "⌘⇧U", description: "Toggle unread" },
+  { keys: "⌘ + / −", description: "Zoom terminal" },
   { keys: "⌘/", description: "Open this help" },
 ];
 

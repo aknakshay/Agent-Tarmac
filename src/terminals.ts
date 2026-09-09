@@ -13,6 +13,66 @@ interface TerminalEntry {
 
 const registry = new Map<string, TerminalEntry>();
 
+// Terminal font size is shared across every pane and persisted per install, so
+// ⌘+/⌘-/⌘0 zoom applies everywhere at once and survives relaunch. Clamped to a
+// legible range.
+const FONT_MIN = 8;
+const FONT_MAX = 32;
+const FONT_DEFAULT = 13;
+const FONT_KEY = "agent-tarmac:terminalFontSize";
+
+function loadFontSize(): number {
+  try {
+    const v = parseInt(localStorage.getItem(FONT_KEY) ?? "", 10);
+    if (!Number.isNaN(v) && v >= FONT_MIN && v <= FONT_MAX) return v;
+  } catch {
+    // Storage unavailable — fall through to the default.
+  }
+  return FONT_DEFAULT;
+}
+
+let fontSize = loadFontSize();
+
+export function getTerminalFontSize(): number {
+  return fontSize;
+}
+
+/**
+ * Sets the shared terminal font size (clamped), applies it live to every
+ * existing terminal, re-fits each open pane, and tells the PTY the new
+ * rows/cols. A font change doesn't resize the container, so TerminalPane's
+ * ResizeObserver won't fire — we refit + resize_pty here instead. Persisted.
+ */
+export function setTerminalFontSize(next: number): number {
+  const clamped = Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(next)));
+  fontSize = clamped;
+  try {
+    localStorage.setItem(FONT_KEY, String(clamped));
+  } catch {
+    // Non-fatal: the size still applies for this run.
+  }
+  for (const [id, entry] of registry) {
+    entry.term.options.fontSize = clamped;
+    if (entry.opened) {
+      entry.fit.fit();
+      invoke("resize_pty", { sessionId: id, rows: entry.term.rows, cols: entry.term.cols }).catch(
+        () => {},
+      );
+    }
+  }
+  return clamped;
+}
+
+/** Bumps the shared terminal font size by `delta` points (⌘+ / ⌘-). */
+export function adjustTerminalFontSize(delta: number): number {
+  return setTerminalFontSize(fontSize + delta);
+}
+
+/** Resets the terminal font size to the default (⌘0 in a terminal). */
+export function resetTerminalFontSize(): number {
+  return setTerminalFontSize(FONT_DEFAULT);
+}
+
 /** Reads a design token from `:root` (Tailwind `@theme` custom property). */
 function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -74,7 +134,7 @@ export function getOrCreateTerminal(id: string): TerminalEntry {
   const term = new Terminal({
     scrollback: 10000,
     theme: buildTheme(),
-    fontSize: 13,
+    fontSize,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     cursorBlink: true,
     allowProposedApi: true,

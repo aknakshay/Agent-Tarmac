@@ -11,7 +11,7 @@ import { RestoreBanner } from "./components/RestoreBanner";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Home } from "./components/Home";
 import { SplashScreen } from "./components/SplashScreen";
-import { writeExited, writeOutput } from "./terminals";
+import { adjustTerminalFontSize, writeExited, writeOutput } from "./terminals";
 import type { SessionMeta, StatusChange } from "./types";
 import type { Workspace } from "./lib/workspaceMeta";
 
@@ -103,6 +103,20 @@ function App() {
       }
 
       if (isAppEditableTarget) return;
+
+      // Terminal zoom: ⌘+ / ⌘= to enlarge, ⌘- to shrink. Applies live to every
+      // pane and persists. Handled here (not in xterm) so it works while a
+      // terminal has focus — xterm never claims ⌘ chords. ⌘0 stays Home.
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        adjustTerminalFontSize(1);
+        return;
+      }
+      if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        adjustTerminalFontSize(-1);
+        return;
+      }
 
       if (e.key === "/") {
         e.preventDefault();

@@ -73,7 +73,7 @@ export function NewSessionDialog({ onClose, onStarted }: NewSessionDialogProps) 
         role="dialog"
         aria-modal="true"
         aria-label="New session"
-        className="z-50 w-full max-w-sm overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
+        className="z-50 w-full max-w-md overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex h-11 items-center justify-between border-b border-border px-4">
@@ -119,8 +119,15 @@ export function NewSessionDialog({ onClose, onStarted }: NewSessionDialogProps) 
                     disabled={starting !== null}
                     className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-100 hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <span className="min-w-0 flex-1 truncate text-sm text-ink">{basename(cwd)}</span>
-                    <span className="shrink-0 truncate text-xs text-ink-faint">{cwd}</span>
+                    {/* Stacked so the folder name is always visible; the full
+                        path sits below and truncates instead of squeezing the
+                        name to zero width (a `shrink-0` path used to eat the row). */}
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-sm text-ink">{basename(cwd)}</span>
+                      <span className="truncate text-xs text-ink-faint" title={cwd}>
+                        {cwd}
+                      </span>
+                    </span>
                     {starting === cwd && (
                       <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-ink-faint border-t-transparent" />
                     )}
