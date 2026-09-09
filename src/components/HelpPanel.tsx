@@ -59,12 +59,15 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Capture phase + stopPropagation so Esc closes the panel even while a
+        // terminal pane has focus (xterm would otherwise eat the keydown first).
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [onClose]);
 
   const openLink = (url: string) => (e: React.MouseEvent) => {

@@ -19,12 +19,16 @@ export function NewSessionDialog({ onClose, onStarted }: NewSessionDialogProps) 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Capture phase + stopPropagation so Esc closes the dialog even while a
+        // terminal pane has focus — otherwise xterm's textarea receives the
+        // keydown first and writes ESC to the PTY instead of closing us.
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [onClose]);
 
   const recentDirs = useMemo(() => {
