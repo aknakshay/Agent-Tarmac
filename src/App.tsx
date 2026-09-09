@@ -38,6 +38,48 @@ function App() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
+  // Sidebar width is user-draggable (the handle between the sidebar and the
+  // terminal) and persisted per install. Clamped to a sane range.
+  const SIDEBAR_MIN = 240;
+  const SIDEBAR_MAX = 560;
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const v = parseInt(localStorage.getItem("agent-tarmac:sidebarWidth") ?? "", 10);
+      if (!Number.isNaN(v) && v >= SIDEBAR_MIN && v <= SIDEBAR_MAX) return v;
+    } catch {
+      // ignore — fall through to default
+    }
+    return 300;
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("agent-tarmac:sidebarWidth", String(sidebarWidth));
+    } catch {
+      // ignore
+    }
+  }, [sidebarWidth]);
+
+  // Drag-to-resize: the sidebar's left edge is the window's left edge, so the
+  // new width is just the pointer's x, clamped. Window-level listeners (added
+  // on pointer-down, removed on up) so the drag keeps tracking even if the
+  // pointer outruns the 4px handle.
+  const startSidebarResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (ev: PointerEvent) => {
+      setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, ev.clientX)));
+    };
+    const onUp = () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   // First run: pop the help panel once, keyed off a localStorage flag rather
   // than any session/onboarding state, so it fires exactly once per install
   // regardless of what's already in the deck. Wrapped in try/catch — some
@@ -246,10 +288,21 @@ function App() {
   return (
     <div className="flex h-dvh w-full min-h-0 overflow-hidden bg-app-bg text-ink">
       <Sidebar
+        width={sidebarWidth}
         onOpenCommandBar={() => setCommandBarOpen(true)}
         onOpenNewSession={() => setNewSessionOpen(true)}
         onOpenHelp={() => setHelpOpen(true)}
       />
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        onPointerDown={startSidebarResize}
+        className="group relative w-px shrink-0 cursor-col-resize bg-border"
+      >
+        {/* Fat invisible hit area over the 1px seam, with a hover/active tint. */}
+        <span className="absolute inset-y-0 -left-1 -right-1 z-10 transition-colors group-hover:bg-accent/40 group-active:bg-accent/60" />
+      </div>
       <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col">
           <UpdateBanner />

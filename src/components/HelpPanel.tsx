@@ -22,7 +22,7 @@ const CAPABILITIES: Array<{ icon: React.ReactNode; title: string; body: string }
   {
     icon: <GridIcon />,
     title: "Every session, one window",
-    body: "Claude Code and Codex — even sessions you started in another terminal.",
+    body: "Claude Code and Codex — each with its own pilot — even sessions you started in another terminal.",
   },
   {
     icon: <BellIcon />,

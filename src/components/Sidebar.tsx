@@ -28,9 +28,11 @@ interface SidebarProps {
   onOpenCommandBar(): void;
   onOpenNewSession(): void;
   onOpenHelp(): void;
+  /** Current sidebar width in px (user-draggable — see App.tsx). */
+  width: number;
 }
 
-export function Sidebar({ onOpenCommandBar, onOpenNewSession, onOpenHelp }: SidebarProps) {
+export function Sidebar({ onOpenCommandBar, onOpenNewSession, onOpenHelp, width }: SidebarProps) {
   const sessions = useDeck((state) => state.sessions);
   const sessionsLoaded = useDeck((state) => state.sessionsLoaded);
   const scanning = useDeck((state) => state.scanning);
@@ -157,7 +159,10 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession, onOpenHelp }: Side
   };
 
   return (
-    <aside className="flex h-full min-h-0 w-[280px] shrink-0 flex-col border-r border-border bg-surface">
+    <aside
+      style={{ width }}
+      className="flex h-full min-h-0 shrink-0 flex-col bg-surface"
+    >
       <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border px-3">
         <button
           type="button"
@@ -254,7 +259,7 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession, onOpenHelp }: Side
           )}
         </div>
       ) : (
-        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto py-1">
           {groups.length === 0 && (
             <p className="px-2 py-3 text-center text-xs text-ink-faint">No sessions match the selected tags.</p>
           )}
@@ -293,7 +298,7 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession, onOpenHelp }: Side
                         : undefined
                     }
                     aria-expanded={!isCollapsed}
-                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-xs font-semibold tracking-wide text-ink-faint uppercase hover:text-ink-muted"
+                    className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-semibold tracking-wide text-ink-faint uppercase hover:text-ink-muted"
                   >
                     <ChevronIcon collapsed={isCollapsed} />
                     <span className="truncate">{group.label}</span>
@@ -303,7 +308,7 @@ export function Sidebar({ onOpenCommandBar, onOpenNewSession, onOpenHelp }: Side
                   </button>
                 )}
                 {!isCollapsed && (
-                  <div className="flex flex-col gap-0.5">
+                  <div className="flex flex-col divide-y divide-border/40">
                     {group.sessions.map((session) => (
                       <SessionRow
                         key={session.id}

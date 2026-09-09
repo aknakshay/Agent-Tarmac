@@ -1,0 +1,31 @@
+/* Generative pilot avatar + status ring. The ring color (`--rc`) is set inline
+   per status; the 2px gap uses the sidebar surface so the ring reads as a
+   floating halo. needsYou pulses to draw the eye (motion-safe). */
+.pilot-av {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 3.5px var(--rc, var(--color-ink-faint));
+}
+.pilot-av svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pilot-av--need {
+    animation: pilot-pulse 2s ease-in-out infinite;
+  }
+}
+@keyframes pilot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 3.5px var(--rc);
+  }
+  50% {
+    box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 3.5px var(--rc),
+      0 0 8px 3px color-mix(in srgb, var(--rc) 55%, transparent);
+  }
+}

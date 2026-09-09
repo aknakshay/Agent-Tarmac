@@ -3,7 +3,20 @@ import type { Session } from "../types";
 import { relativeTime } from "../lib/relativeTime";
 import { basename } from "../lib/paths";
 import { displayTitle, isSessionUnread } from "../lib/session";
-import { JetIcon } from "./JetIcon";
+import { PilotAvatar } from "./PilotAvatar";
+
+const STATUS_LABEL: Record<Session["status"], string> = {
+  working: "Working",
+  needsYou: "Needs you",
+  idle: "Idle",
+  dormant: "Dormant",
+};
+const STATUS_CLASS: Record<Session["status"], string> = {
+  working: "text-working",
+  needsYou: "text-needs-you",
+  idle: "text-ink-muted",
+  dormant: "text-ink-faint",
+};
 
 interface SessionRowProps {
   session: Session;
@@ -42,23 +55,23 @@ export function SessionRow({
       onClick={onSelect}
       onContextMenu={onContextMenu}
       aria-current={active ? "true" : undefined}
-      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-150 ${
-        active ? "bg-surface-hover" : "hover:bg-surface-hover"
+      className={`flex w-full items-center gap-3 px-3 py-3 text-left transition-colors duration-150 ${
+        active ? "bg-surface-hover shadow-[inset_2px_0_0_var(--color-accent)]" : "hover:bg-surface-hover"
       }`}
     >
-      <span className="relative shrink-0">
-        <JetIcon status={session.status} className="h-3 w-3" />
-        {unread && (
-          <span
-            className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-accent ring-2 ring-surface"
-            role="status"
-            aria-label="Unread"
-          />
-        )}
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex items-center gap-1.5">
-          <span className={`truncate text-sm ${unread ? "font-semibold text-ink" : "text-ink"}`}>{title}</span>
+      {/* Pilot = identity (deterministic from id); the ring around it = status. */}
+      <PilotAvatar id={session.id} status={session.status} size={40} />
+
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex items-baseline gap-2">
+          <span className={`min-w-0 flex-1 truncate text-sm ${unread ? "font-semibold text-ink" : "text-ink"}`}>
+            {title}
+          </span>
+          <span className={`shrink-0 text-[11px] tabular-nums ${unread ? "text-needs-you" : "text-ink-faint"}`}>
+            {relativeTime(session.lastActivity)}
+          </span>
+        </span>
+        <span className="flex min-w-0 items-center gap-1.5 text-xs">
           {session.backend === "codex" && (
             <span
               className="shrink-0 rounded-[3px] border border-codex/35 px-1 py-px text-[9px] font-semibold uppercase leading-none tracking-[0.08em] text-codex"
@@ -67,22 +80,24 @@ export function SessionRow({
               codex
             </span>
           )}
-          {session.badge && (
-            <span
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-needs-you"
-              role="status"
-              aria-label="Needs you"
-            />
-          )}
-        </span>
-        <span className="flex items-center gap-1 truncate text-xs text-ink-faint">
-          {basename(session.cwd)}
+          <span className="truncate text-ink-faint">{basename(session.cwd)}</span>
+          <span className="h-[3px] w-[3px] shrink-0 rounded-full bg-ink-faint/60" aria-hidden="true" />
+          <span className={`shrink-0 font-medium ${STATUS_CLASS[session.status]}`}>
+            {STATUS_LABEL[session.status]}
+          </span>
           {session.tags.length > 0 && (
             <span className="truncate text-ink-faint/70">· {session.tags.join(", ")}</span>
           )}
         </span>
       </span>
-      <span className="shrink-0 text-xs text-ink-faint">{relativeTime(session.lastActivity)}</span>
+
+      {unread && (
+        <span
+          className="h-2 w-2 shrink-0 self-center rounded-full bg-needs-you"
+          role="status"
+          aria-label="Unread"
+        />
+      )}
     </button>
   );
 }

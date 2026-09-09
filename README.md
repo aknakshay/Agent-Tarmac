@@ -28,7 +28,7 @@ It's agent-agnostic by design — it manages **Claude Code and Codex** today, wi
 - **Dashboard over every session** — not a walled garden of app-created sessions. Any `claude --resume`-able or `codex resume`-able session shows up, regardless of where it was started.
 - **Claude Code *and* Codex** — both agents in one cockpit, side by side, with a per-backend badge. ChatGPT-app Codex sessions are hidden by default and one toggle away.
 - **Embedded terminals** — interact with live sessions inside the app, sidebar + terminal pane, like a chat client.
-- **Activity-aware sidebar** — per-session status (`Working` / `NeedsYou` / `Idle` / `Dormant`), with badges and optional macOS notifications for the one thing you actually need to know: which session is blocked on you.
+- **Activity-aware sidebar** — a chat-style list where each session gets a unique generated pilot avatar and a status ring (`Working` / `NeedsYou` / `Idle` / `Dormant`), with badges and optional macOS notifications for the one thing you actually need to know: which session is blocked on you. Drag the divider to resize it.
 - **Token stats you can flex** — a live tally of every token your agents have burned across all sessions, plus a shareable "tokenmaxxing" card. Counted from your transcripts — Agent Tarmac never spends a token of its own.
 - **Restore workspace** — after a reboot, one click respawns everything that was running.
 - **Pop out to a real terminal** — eject any session to your terminal of choice (Ghostty, iTerm2, Terminal…); Agent Tarmac keeps tracking it via transcript watching.
