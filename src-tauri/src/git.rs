@@ -271,7 +271,9 @@ fn compute_git_changes(cwd: &str) -> Result<GitChanges, String> {
     files.sort_by(|a, b| {
         let a_conflict = a.status == "conflict";
         let b_conflict = b.status == "conflict";
-        b_conflict.cmp(&a_conflict).then_with(|| a.path.cmp(&b.path))
+        b_conflict
+            .cmp(&a_conflict)
+            .then_with(|| a.path.cmp(&b.path))
     });
 
     Ok(GitChanges {
