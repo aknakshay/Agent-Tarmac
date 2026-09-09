@@ -4,6 +4,7 @@ pub mod bounded_read;
 pub mod claude_bin;
 pub mod codex;
 pub mod codex_bin;
+pub mod git;
 pub mod pop_out;
 pub mod pty_manager;
 pub mod session_cache;
@@ -75,6 +76,9 @@ pub fn run() {
             pop_out::detect_terminals,
             pop_out::list_external_sessions,
             token_stats::token_stats,
+            git::git_changes,
+            git::git_file_diff,
+            git::git_branch,
             snapshot::save_snapshot_png,
             share_sheet::share_snapshot_png,
         ])

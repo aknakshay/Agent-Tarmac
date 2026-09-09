@@ -1,13 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useDeck } from "../store";
 import { ensureOpened, getOrCreateTerminal, writeInfoLine } from "../terminals";
 import { basename } from "../lib/paths";
 import { displayTitle } from "../lib/session";
 import { BringBackDialog } from "./BringBackDialog";
+import { ChangesPanel } from "./ChangesPanel";
 import { JetIcon } from "./JetIcon";
 import { Logo } from "./icons/BrandMotifs";
 import { defaultTerminal, terminalLabel } from "../lib/terminals";
+import type { StatusChange } from "../types";
+
+type PaneView = "terminal" | "changes";
+
+const BRANCH_REFRESH_DEBOUNCE_MS = 300;
 
 interface PopOutResult {
   app: string;
@@ -95,6 +102,50 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
   const [poppingOut, setPoppingOut] = useState(false);
   const [popOutError, setPopOutError] = useState<string | null>(null);
 
+  // Current branch, shown as an always-visible chip in the header regardless
+  // of which view (Terminal/Changes) is active. Fetched on mount/cwd change
+  // and refreshed whenever this session's agent stops (same idle/needsYou
+  // signal ChangesPanel refreshes on), so the chip doesn't go stale after a
+  // commit or checkout the agent made.
+  const [branch, setBranch] = useState<string | null>(null);
+  useEffect(() => {
+    if (!cwd) {
+      setBranch(null);
+      return;
+    }
+    let cancelled = false;
+    invoke<string | null>("git_branch", { cwd })
+      .then((result) => {
+        if (!cancelled) setBranch(result);
+      })
+      .catch((err) => {
+        console.error(`git_branch failed for session ${sessionId}`, err);
+        if (!cancelled) setBranch(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, cwd]);
+
+  useEffect(() => {
+    if (!cwd) return;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const statusChanged = listen<StatusChange>("session_status_changed", (event) => {
+      if (event.payload.sessionId !== sessionId) return;
+      if (event.payload.status !== "idle" && event.payload.status !== "needsYou") return;
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        invoke<string | null>("git_branch", { cwd })
+          .then(setBranch)
+          .catch((err) => console.error(`git_branch refresh failed for session ${sessionId}`, err));
+      }, BRANCH_REFRESH_DEBOUNCE_MS);
+    });
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      statusChanged.then((unlisten) => unlisten());
+    };
+  }, [sessionId, cwd]);
+
   // The Rust ExternalSessions state is the authority on popped-out sessions;
   // the store's externalIds mirrors it (seeded at startup from the backend's
   // reconciliation, updated by the actions below), so "Bring back" survives
@@ -119,6 +170,10 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
   const availableTerminals = useDeck((state) => state.availableTerminals);
   const [terminalMenuOpen, setTerminalMenuOpen] = useState(false);
   const popOutDefault = defaultTerminal(availableTerminals);
+
+  // Per-pane Terminal ⇄ Changes view. Local state (not persisted) — each pane
+  // starts on the terminal, same as every other view toggle in the app.
+  const [paneView, setPaneView] = useState<PaneView>("terminal");
 
   const handlePopOut = (terminal: string) => {
     setTerminalMenuOpen(false);
@@ -193,6 +248,46 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
           ·
         </span>
         <span className="truncate text-xs text-ink-faint">{project}</span>
+
+        {/* Always-visible current-branch chip — visible in both Terminal and
+            Changes views, secondary to the project name. Hidden entirely
+            when there's no cwd or the cwd isn't a git repo (git_branch
+            resolves null). */}
+        {branch && (
+          <span
+            className="flex min-w-0 shrink items-center gap-1 text-[11px] text-ink-faint"
+            title={branch}
+          >
+            <BranchIcon />
+            <span className="min-w-0 truncate">{branch}</span>
+          </span>
+        )}
+
+        {/* Terminal ⇄ Changes segmented toggle. The terminal stays mounted
+            underneath either way (see the `hidden` toggling below) so its
+            xterm scrollback/PTY wiring never gets torn down. */}
+        <div className="flex shrink-0 items-center rounded-md border border-border p-0.5 text-[11px]">
+          <button
+            type="button"
+            onClick={() => setPaneView("terminal")}
+            aria-pressed={paneView === "terminal"}
+            className={`rounded-sm px-2 py-0.5 font-medium transition-colors ${
+              paneView === "terminal" ? "bg-surface-hover text-ink" : "text-ink-faint hover:text-ink-muted"
+            }`}
+          >
+            Terminal
+          </button>
+          <button
+            type="button"
+            onClick={() => setPaneView("changes")}
+            aria-pressed={paneView === "changes"}
+            className={`rounded-sm px-2 py-0.5 font-medium transition-colors ${
+              paneView === "changes" ? "bg-surface-hover text-ink" : "text-ink-faint hover:text-ink-muted"
+            }`}
+          >
+            Changes
+          </button>
+        </div>
 
         {/* "Bring back to Tarmac" — shown only when this session is popped out */}
         {isPoppedOut && !bringingBack && (
@@ -287,21 +382,25 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
         {/* Bottom padding is deliberately asymmetric (pb-2 vs pt-1): it keeps
             the last terminal row clear of the pane edge without shifting the
             header's tight spacing above. FitAddon measures this container,
-            so the padding is already accounted for on every refit. */}
-        <div ref={containerRef} className="h-full w-full px-2 pt-1 pb-2" />
+            so the padding is already accounted for on every refit.
+            Hidden (not unmounted) when the Changes view is active, so the
+            xterm instance and its PTY wiring survive the toggle. */}
+        <div ref={containerRef} className="h-full w-full px-2 pt-1 pb-2" hidden={paneView !== "terminal"} />
         {/* Static brand watermark. Kept as a DOM overlay above the xterm
             canvas (rather than composited into its background) so it works
             identically whether xterm is using the WebGL or canvas renderer,
             and never risks the WebGL renderer's transparency handling. Kill
             switch: --watermark-opacity in index.css. */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute right-3 bottom-3 h-14 w-14 text-ink"
-          style={{ opacity: "var(--watermark-opacity)" }}
-        >
-          <Logo className="h-full w-full" />
-        </div>
-        {resumeError && (
+        {paneView === "terminal" && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute right-3 bottom-3 h-14 w-14 text-ink"
+            style={{ opacity: "var(--watermark-opacity)" }}
+          >
+            <Logo className="h-full w-full" />
+          </div>
+        )}
+        {paneView === "terminal" && resumeError && (
           <div
             role="alert"
             className="absolute inset-x-2 top-2 rounded-md border border-needs-you/40 bg-surface px-3 py-2 text-xs text-needs-you"
@@ -309,7 +408,7 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
             Couldn't resume this session: {resumeError}
           </div>
         )}
-        {popOutError && (
+        {paneView === "terminal" && popOutError && (
           <div
             role="alert"
             className="absolute inset-x-2 top-2 rounded-md border border-needs-you/40 bg-surface px-3 py-2 text-xs text-needs-you"
@@ -317,12 +416,17 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
             Couldn't pop out: {popOutError}
           </div>
         )}
-        {bringBackError && (
+        {paneView === "terminal" && bringBackError && (
           <div
             role="alert"
             className="absolute inset-x-2 top-2 rounded-md border border-needs-you/40 bg-surface px-3 py-2 text-xs text-needs-you"
           >
             Couldn't bring back session: {bringBackError}
+          </div>
+        )}
+        {paneView === "changes" && (
+          <div className="absolute inset-0">
+            <ChangesPanel sessionId={sessionId} cwd={cwd} />
           </div>
         )}
       </div>
@@ -335,6 +439,25 @@ export function TerminalPane({ sessionId, active }: TerminalPaneProps) {
         />
       )}
     </div>
+  );
+}
+
+function BranchIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-[11px] w-[11px] shrink-0 fill-none stroke-current"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {/* Two nodes (top-right, bottom-left) joined by a fork line — a
+          minimal git-branch glyph. */}
+      <circle cx="11.5" cy="4" r="1.6" />
+      <circle cx="4.5" cy="12" r="1.6" />
+      <path d="M4.5 10.4V7a2.5 2.5 0 0 1 2.5-2.5h3" />
+    </svg>
   );
 }
 

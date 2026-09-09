@@ -39,6 +39,11 @@ const CAPABILITIES: Array<{ icon: React.ReactNode; title: string; body: string }
     title: "Survive reboots",
     body: "After a restart, Restore brings every running session back in one click.",
   },
+  {
+    icon: <DiffIcon />,
+    title: "See what changed",
+    body: "A Changes tab on each session shows the git diff of what the agent touched, with the branch in the header.",
+  },
 ];
 
 const LEGEND: Array<{ status: "working" | "needsYou" | "idle" | "dormant"; label: string }> = [
@@ -255,6 +260,22 @@ function RestoreIcon() {
     >
       <path d="M3 8a5 5 0 1 1 1.6 3.7" />
       <path d="M3 12.5V9.5H6" />
+    </svg>
+  );
+}
+
+function DiffIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className="h-3.5 w-3.5 fill-none stroke-current"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 2.5v4M2 4.5h4M2.5 12.5h4" />
+      <path d="M10 3.5h3.5v3.5M13.5 3.5 9 8M6 11l4-4" />
     </svg>
   );
 }
