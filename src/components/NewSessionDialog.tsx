@@ -15,6 +15,7 @@ export function NewSessionDialog({ onClose, onStarted }: NewSessionDialogProps) 
   const sessions = useDeck((state) => state.sessions);
   const [starting, setStarting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState("");
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -53,6 +54,10 @@ export function NewSessionDialog({ onClose, onStarted }: NewSessionDialogProps) 
     try {
       const sessionId = await invoke<string>("start_new_session", { cwd });
       onStarted(sessionId, cwd);
+      const trimmedName = name.trim();
+      if (trimmedName) {
+        useDeck.getState().setCustomTitle(sessionId, trimmedName);
+      }
     } catch (err) {
       setError(String(err));
       setStarting(null);
@@ -93,6 +98,23 @@ export function NewSessionDialog({ onClose, onStarted }: NewSessionDialogProps) 
         </div>
 
         <div className="flex flex-col gap-3 p-4">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                // No single "start" action lives in this field — starting
+                // happens by choosing a directory below.
+                e.preventDefault();
+              }
+            }}
+            placeholder="Name this session (optional)"
+            aria-label="Session name (optional)"
+            data-app-editable
+            className="h-9 w-full rounded-md border border-border bg-app-bg px-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-accent/50 focus:outline-none"
+          />
+
           <button
             type="button"
             onClick={pickDirectory}
